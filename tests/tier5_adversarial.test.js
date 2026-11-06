@@ -28,7 +28,7 @@ import { criarCardAlunoSPA } from '../services/bitrix24.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const EXACT_ERROR_TEXT = 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão';
+const EXACT_ERROR_TEXT = 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.';
 
 describe('Tier 5 Adversarial Hardening Suite', () => {
 
@@ -294,7 +294,7 @@ describe('Tier 5 Adversarial Hardening Suite', () => {
           if (prefeituraSP && !/^\d{4}-\d{2}-\d{2}$/.test(dataEvolucao || '')) {
             return res.status(400).json({
               sucesso: false,
-              mensagem: 'Para a Prefeitura de SP, informe a data da última evolução funcional.'
+              mensagem: 'Informe a data da última evolução funcional.'
             });
           }
         }

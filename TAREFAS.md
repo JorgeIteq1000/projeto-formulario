@@ -21,7 +21,7 @@
 ## 🎯 Nova Fase: Validação Retroativa de 17 Meses, Aceite Individual e Bitrix24 SPA
 
 - [x] **R1. Regra de Limite Retroativo de 17 Meses para Data da Última Evolução:**
-  - Bloquear avanço e exibir mensagem exata: *"Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão"* caso a data seja anterior a 17 meses da data atual.
+  - Bloquear avanço e exibir mensagem exata: *"O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão."* caso a data seja anterior a 17 meses da data atual.
 - [x] **R2. Aceite Individual por Certificado e Sugestão de Datas Customizadas:**
   - Seletor "Aceito" e "Não Aceito" independente para cada certificado sugerido.
   - Se "Não Aceito", exibir campo para data de início desejada validando início >= 17 meses retroativos e término (+1 mês) <= data atual.

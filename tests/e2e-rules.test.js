@@ -28,7 +28,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Constante canônica do erro exigida pela especificação R1 / F1
-const MENSAGEM_ERRO_17_MESES = 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão';
+const MENSAGEM_ERRO_17_MESES = 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.';
 
 // Texto institucional exato exigido pela especificação R3 / F2
 const TEXTO_INSTITUCIONAL_72H = 'Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba "Meus Dados". A falta de finalização do formulário em 96hr, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno.';
@@ -134,7 +134,7 @@ describe('Tier 1 — Feature Coverage (F1 a F6)', () => {
       assert.ok(
         conteudoNormalizado.includes('Caso seja necessário atualização ou correção de algum dado pessoal') &&
         (conteudoNormalizado.includes('exclusivamente na área do aluno, aba "Meus Dados"') ||
-         conteudoNormalizado.includes('exclusivamente na área do aluno, aba &quot;Meus Dados&quot;')) &&
+          conteudoNormalizado.includes('exclusivamente na área do aluno, aba &quot;Meus Dados&quot;')) &&
         conteudoNormalizado.includes('ocasionará o cancelamento da solicitação'),
         'StudentForm.jsx deve conter o aviso institucional de 96h conforme especificado em R3'
       );

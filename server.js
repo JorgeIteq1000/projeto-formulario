@@ -94,8 +94,8 @@ const JANELA_HORAS = 24;
 const RESPOSTAS_FILE = process.env.RESPOSTAS_FILE
   ? path.resolve(process.env.RESPOSTAS_FILE)
   : (process.env.VERCEL
-      ? path.join(os.tmpdir(), 'respostas.json')
-      : path.join(__dirname, 'data', 'respostas.json'));
+    ? path.join(os.tmpdir(), 'respostas.json')
+    : path.join(__dirname, 'data', 'respostas.json'));
 
 const REDES_VALIDAS = ['particular', 'estadual', 'municipal'];
 
@@ -252,7 +252,7 @@ export function garantirBaseCarregada() {
 }
 
 // Inicializa a carga assíncrona no startup
-garantirBaseCarregada().catch(() => {});
+garantirBaseCarregada().catch(() => { });
 
 // Monta o link para o aluno (suporta domínio de produção, IP local de rede ou host da requisição)
 function montarUrl(token, req = null) {
@@ -336,11 +336,11 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     if (typeof prefeituraSP !== 'boolean') {
       return res.status(400).json({ sucesso: false, mensagem: 'Informe se você atua na Prefeitura de SP.' });
     }
-    // Prefeitura de SP: data da última evolução é OBRIGATÓRIA
+    // Prefeitura de SP / Rede Municipal: data da última evolução é OBRIGATÓRIA
     if (prefeituraSP && !/^\d{4}-\d{2}-\d{2}$/.test(dataEvolucao || '')) {
       return res.status(400).json({
         sucesso: false,
-        mensagem: 'Para a Prefeitura de SP, informe a data da última evolução funcional.'
+        mensagem: 'Informe a data da última evolução funcional.'
       });
     }
     // Outro município: data da evolução é OPCIONAL
@@ -355,7 +355,7 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     if (!valEvolucao.valida) {
       return res.status(400).json({
         sucesso: false,
-        mensagem: valEvolucao.erro || 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão'
+        mensagem: valEvolucao.erro || 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.'
       });
     }
   }
@@ -400,8 +400,8 @@ app.post('/api/link/:token/resposta', async (req, res) => {
   const temRevisao = cursosNaoAceitos.length > 0 || Boolean(typeof observacao === 'string' && observacao.trim());
   const resumoCustomizacao = cursosNaoAceitos.length > 0
     ? cursosNaoAceitos
-        .map((c) => `• ${c.curso}: Início solicitado ${c.dataInicioCustomizadaFormatada || c.dataInicioFormatada} a ${c.dataFimCustomizadaFormatada || c.dataFimFormatada}`)
-        .join('\n')
+      .map((c) => `• ${c.curso}: Início solicitado ${c.dataInicioCustomizadaFormatada || c.dataInicioFormatada} a ${c.dataFimCustomizadaFormatada || c.dataFimFormatada}`)
+      .join('\n')
     : null;
 
   const stageEsperado = temRevisao

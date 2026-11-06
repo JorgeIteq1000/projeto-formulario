@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import {
   gerarSugestoesPeriodos,
+  recalcularPeriodosComJanela30Dias,
   formatDateBR,
   parseDate,
   validarDataEvolucao17Meses,
@@ -30,7 +31,7 @@ const NAO_INFORMADO = 'Não informado';
 function formatarTipoComCarga(curso) {
   const tipo = curso.tipoCurso || 'Extensão';
   const carga = String(curso.cargaHoraria || '').trim();
-  if (!carga) return tipo;
+  if (!carga || /\d+\s*h/i.test(tipo)) return tipo;
   return /^\d+$/.test(carga) ? `${tipo} • ${carga}h` : `${tipo} • ${carga}`;
 }
 
@@ -42,6 +43,7 @@ export default function StudentForm({ token }) {
   // Profissional da Educação que atua na Rede Municipal de ensino: null | true | false
   const [professor, setProfessor] = useState(null);
   const [dataEvolucao, setDataEvolucao] = useState('');
+  const [periodosAtivos, setPeriodosAtivos] = useState([]);
   const [aceitesCursos, setAceitesCursos] = useState({});
   const [confirmacao, setConfirmacao] = useState(false);
 
@@ -100,8 +102,18 @@ export default function StudentForm({ token }) {
     return gerarSugestoesPeriodos(dataEvolucao, dados.cursos);
   }, [dataEvolucao, dados?.cursos, validacaoEvolucao.valida]);
 
+  useEffect(() => {
+    setPeriodosAtivos(periodosSugeridos);
+    setAceitesCursos({});
+  }, [periodosSugeridos]);
+
+  const listaPeriodosBase =
+    periodosAtivos.length === periodosSugeridos.length && periodosAtivos.length > 0
+      ? periodosAtivos
+      : periodosSugeridos;
+
   // Duração (em meses) do período do curso, conforme a carga horária
-  const mesesDoCurso = (indice) => periodosSugeridos.find((p) => p.indice === indice)?.mesesPeriodo || 1;
+  const mesesDoCurso = (indice) => listaPeriodosBase.find((p) => p.indice === indice)?.mesesPeriodo || 1;
 
   // Handlers para aceite individual e datas customizadas
   const escolherAceite = (indice, novoAceite) => {
@@ -113,7 +125,8 @@ export default function StudentForm({ token }) {
           [indice]: {
             ...atual,
             aceite: 'Aceito',
-            erro: null
+            erro: null,
+            desmarcadoPorAlteracao: false
           }
         };
       }
@@ -130,7 +143,8 @@ export default function StudentForm({ token }) {
           dataInicioISO: val.dataInicioISO,
           dataFimISO: val.dataFimISO,
           dataInicioFormatada: val.dataInicioFormatada,
-          dataFimFormatada: val.dataFimFormatada
+          dataFimFormatada: val.dataFimFormatada,
+          desmarcadoPorAlteracao: false
         }
       };
     });
@@ -138,26 +152,55 @@ export default function StudentForm({ token }) {
 
   const escolherDataConclusao = (indice, dataStr) => {
     const val = validarDataConclusao(dataStr, new Date(), mesesDoCurso(indice));
-    setAceitesCursos((prev) => ({
-      ...prev,
-      [indice]: {
-        ...(prev[indice] || {}),
-        aceite: 'Não Aceito',
-        dataConclusao: dataStr,
-        valida: val.valida,
-        erro: val.erro,
-        dataInicioISO: val.dataInicioISO,
-        dataFimISO: val.dataFimISO,
-        dataInicioFormatada: val.dataInicioFormatada,
-        dataFimFormatada: val.dataFimFormatada
+    let indicesModificados = [];
+
+    if (val.valida) {
+      const recalculo = recalcularPeriodosComJanela30Dias(listaPeriodosBase, indice, dataStr, new Date());
+      setPeriodosAtivos(recalculo.periodos);
+      indicesModificados = recalculo.indicesModificados;
+    }
+
+    setAceitesCursos((prev) => {
+      const proximo = {
+        ...prev,
+        [indice]: {
+          ...(prev[indice] || {}),
+          aceite: 'Não Aceito',
+          dataConclusao: dataStr,
+          valida: val.valida,
+          erro: val.erro,
+          dataInicioISO: val.dataInicioISO,
+          dataFimISO: val.dataFimISO,
+          dataInicioFormatada: val.dataInicioFormatada,
+          dataFimFormatada: val.dataFimFormatada,
+          desmarcadoPorAlteracao: false
+        }
+      };
+
+      // Se a alteração de data modificou outro certificado (inclusive os que já estavam com status "Aceito"),
+      // desmarca o status para que o aluno escolha novamente "Aceito" ou "Não Aceito"
+      for (const idxMod of indicesModificados) {
+        if (idxMod !== indice) {
+          proximo[idxMod] = {
+            ...(proximo[idxMod] || {}),
+            aceite: null,
+            dataConclusao: '',
+            valida: false,
+            erro: null,
+            desmarcadoPorAlteracao: true
+          };
+        }
       }
-    }));
+
+      return proximo;
+    });
   };
 
   // Consolida os períodos sugeridos com as opções de aceite do aluno
   const periodosProcessados = useMemo(() => {
-    return periodosSugeridos.map((p) => {
+    return listaPeriodosBase.map((p) => {
       const conf = aceitesCursos[p.indice] || {};
+      const isAceito = conf.aceite === 'Aceito';
       const isNaoAceito = conf.aceite === 'Não Aceito';
       if (isNaoAceito) {
         const customValida = Boolean(conf.valida);
@@ -183,7 +226,7 @@ export default function StudentForm({ token }) {
       }
       return {
         ...p,
-        aceite: 'Aceito',
+        aceite: isAceito ? 'Aceito' : null,
         customizado: false,
         dataInicioCustomizada: null,
         dataFimCustomizada: null,
@@ -191,10 +234,10 @@ export default function StudentForm({ token }) {
         dataFimCustomizadaFormatada: null,
         cancelado: Boolean(p.cancelado),
         ultrapassaHoje: Boolean(p.ultrapassaHoje),
-        status: p.ultrapassaHoje ? 'CANCELADO_DATA_FUTURA' : 'APROVADO'
+        status: p.ultrapassaHoje ? 'CANCELADO_DATA_FUTURA' : (isAceito ? 'APROVADO' : 'PENDENTE_ACEITE')
       };
     });
-  }, [periodosSugeridos, aceitesCursos]);
+  }, [listaPeriodosBase, aceitesCursos]);
 
   // Cursos válidos (exclui os cancelados por ultrapassarem a data atual ou com dados inválidos)
   const cursosValidos = useMemo(() => {
@@ -204,16 +247,18 @@ export default function StudentForm({ token }) {
   // Se todas as extensões ultrapassam a data atual ou possuem dados inválidos, o formulário não pode ser enviado
   const todosCancelados = periodosProcessados.length > 0 && cursosValidos.length === 0;
 
-  // Validação: todos os cursos marcados como "Não Aceito" devem possuir uma data customizada válida
+  // Validação: o aluno deve escolher manualmente "Aceito" ou "Não Aceito" (com data válida) para cada certificado
   const customizacoesValidas = useMemo(() => {
-    for (const p of periodosSugeridos) {
+    for (const p of listaPeriodosBase) {
       const conf = aceitesCursos[p.indice];
       if (conf?.aceite === 'Não Aceito') {
         if (!conf.valida) return false;
+      } else if (!p.ultrapassaHoje && conf?.aceite !== 'Aceito') {
+        return false;
       }
     }
     return true;
-  }, [periodosSugeridos, aceitesCursos]);
+  }, [listaPeriodosBase, aceitesCursos]);
 
   // Validação: se atua na Rede Municipal, a data da última evolução é OBRIGATÓRIA
   // e deve respeitar o limite de 17 meses retroativos
@@ -315,7 +360,7 @@ export default function StudentForm({ token }) {
         </div>
         <h2 className="sf-title">Tudo certo, {dados.nome.split(' ')[0]}!</h2>
         <p className="sf-muted">
-          Recebemos suas informações. Seu certificado seguiu para emissão e você será avisado(a) pelo WhatsApp.
+          Recebemos suas informações. Seu certificado seguiu para o processo de emissão e assim que finalizado ficará disponivel em seu portal do aluno na aba Certificados / Lista de Solicitações.
         </p>
         <div className="protocol-showcase-box">
           <div className="protocol-label">Protocolo</div>
@@ -402,7 +447,6 @@ export default function StudentForm({ token }) {
                 {formatarTipoComCarga(c)}
               </span>
               <strong>{c.curso}</strong>
-              <span className="sf-muted sf-small">{c.certificadora}</span>
             </li>
           ))}
         </ul>
@@ -433,157 +477,169 @@ export default function StudentForm({ token }) {
 
         {/* Sim: data da última evolução funcional (obrigatória) */}
         {professor === true && (
-                  <div className="sf-conditional animate-fade-in">
-                    <label className="sf-question" htmlFor="dataEvolucao">
-                      Quando foi a data da sua última evolução funcional?
-                      <span className="badge-pill badge-purple" style={{ marginLeft: 8, fontSize: '0.72rem' }}>
-                        Obrigatório
-                      </span>
-                    </label>
+          <div className="sf-conditional animate-fade-in">
+            <label className="sf-question" htmlFor="dataEvolucao">
+              Quando foi a data da sua última evolução funcional?
+              <span className="badge-pill badge-purple" style={{ marginLeft: 8, fontSize: '0.72rem' }}>
+                Obrigatório
+              </span>
+            </label>
 
-                    <div className="input-with-icon sf-date">
-                      <Calendar size={18} className="field-icon" />
-                      <input
-                        id="dataEvolucao"
-                        type="date"
-                        required
-                        max={hoje}
-                        value={dataEvolucao}
-                        onChange={(e) => setDataEvolucao(e.target.value)}
-                        className="form-input"
-                      />
-                    </div>
-                    <span className="field-helper">
-                      A data da última evolução funcional é usada para calcularmos os períodos válidos de pontuação (limite retroativo de 17 meses).
-                    </span>
+            <div className="input-with-icon sf-date">
+              <Calendar size={18} className="field-icon" />
+              <input
+                id="dataEvolucao"
+                type="date"
+                required
+                max={hoje}
+                value={dataEvolucao}
+                onChange={(e) => setDataEvolucao(e.target.value)}
+                className="form-input"
+              />
+            </div>
+            <span className="field-helper">
+              A data da última evolução funcional é usada para calcularmos os períodos válidos de pontuação.
+            </span>
 
-                    {/* Alerta de erro de 17 meses retroativos */}
-                    {!validacaoEvolucao.valida && (
-                      <div className="lookup-error animate-fade-in" style={{ marginTop: 10 }}>
-                        <AlertCircle size={18} />
-                        <span>{validacaoEvolucao.erro}</span>
-                      </div>
-                    )}
+            {/* Alerta de erro de 17 meses retroativos */}
+            {!validacaoEvolucao.valida && (
+              <div className="lookup-error animate-fade-in" style={{ marginTop: 10 }}>
+                <AlertCircle size={18} />
+                <span>{validacaoEvolucao.erro}</span>
+              </div>
+            )}
 
-                    {/* Bloco de Sugestão de Períodos Pedagógicos */}
-                    {periodosSugeridos.length > 0 && (
-                      <div className="sf-periodos-container animate-fade-in">
-                        <div className="sf-periodos-header">
-                          <div className="sf-periodos-icon">
-                            <CalendarRange size={18} />
-                          </div>
-                          <div>
-                            <h4 className="sf-periodos-title">Sugestão de Período para Emissão</h4>
-                            <p className="sf-periodos-sub">
-                              Períodos mensais em dias úteis, conforme a carga horária e sem sobreposição, a partir de{' '}
-                              <strong>
-                                {formatDateBR(parseDate(dataEvolucao))}
-                              </strong>:
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="sf-periodos-list">
-                          {periodosProcessados.map((p) => {
-                            const conf = aceitesCursos[p.indice] || { aceite: 'Aceito' };
-                            const isNaoAceito = conf.aceite === 'Não Aceito';
-
-                            return (
-                              <div
-                                key={p.indice}
-                                className={`sf-periodo-card ${p.cancelado && !isNaoAceito ? 'cancelado' : ''}`}
-                              >
-                                <div className="sf-periodo-card-main">
-                                  <div className="sf-periodo-info">
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                      <span className="sf-label">Curso {p.indice} • {formatarTipoComCarga(p)}</span>
-                                      {p.ultrapassaHoje && !isNaoAceito && (
-                                        <span className="badge-cancelado">
-                                          <XCircle size={12} /> Sugestão Cancelada (Data Futura)
-                                        </span>
-                                      )}
-                                      {isNaoAceito && (
-                                        <span className="badge-customizado">
-                                          ✏️ Data Customizada
-                                        </span>
-                                      )}
-                                    </div>
-                                    <strong className="sf-periodo-curso" title={p.curso}>{p.curso}</strong>
-                                    {p.ultrapassaHoje && !isNaoAceito && (
-                                      <span style={{ fontSize: '0.74rem', color: '#f87171' }}>
-                                        Término ({p.dataFimFormatada}) ultrapassa a data atual — não é permitida emissão futura. Você pode selecionar "Não Aceito" e informar uma data de conclusão válida.
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="sf-periodo-datas">
-                                    <Clock size={13} />
-                                    <span>{p.dataInicioFormatada} até {p.dataFimFormatada}</span>
-                                  </div>
-                                </div>
-
-                                {/* Seletor de Aceite Individual */}
-                                <div className="sf-aceite-container">
-                                  <div className="sf-aceite-header">
-                                    <span className="sf-aceite-prompt">Você aceita este período proposto?</span>
-                                    <div className="sf-aceite-btn-group">
-                                      <button
-                                        type="button"
-                                        className={`btn-aceite ${!isNaoAceito ? 'active-aceito' : ''}`}
-                                        onClick={() => escolherAceite(p.indice, 'Aceito')}
-                                      >
-                                        <CheckCircle2 size={13} /> Aceito
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className={`btn-aceite ${isNaoAceito ? 'active-nao-aceito' : ''}`}
-                                        onClick={() => escolherAceite(p.indice, 'Não Aceito')}
-                                      >
-                                        <XCircle size={13} /> Não Aceito
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  {/* Campo "Data de Conclusão" quando "Não Aceito" */}
-                                  {isNaoAceito && (
-                                    <div className="sf-custom-date-box animate-fade-in">
-                                      <label className="sf-custom-date-label">
-                                        Data de Conclusão
-                                      </label>
-                                      <div className="sf-custom-input-row">
-                                        <div className="input-with-icon sf-date" style={{ maxWidth: 220 }}>
-                                          <Calendar size={15} className="field-icon" />
-                                          <input
-                                            type="date"
-                                            className="form-input form-input-sm"
-                                            max={hoje}
-                                            value={conf.dataConclusao || ''}
-                                            onChange={(e) => escolherDataConclusao(p.indice, e.target.value)}
-                                          />
-                                        </div>
-                                        {conf.valida && (
-                                          <span className="sf-custom-date-preview">
-                                            Novo período: <strong>{conf.dataInicioFormatada} até {conf.dataFimFormatada}</strong>
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      {conf.erro && (
-                                        <div className="lookup-error animate-fade-in" style={{ marginTop: 6 }}>
-                                          <AlertCircle size={14} />
-                                          <span>{conf.erro}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+            {/* Bloco de Sugestão de Períodos Pedagógicos */}
+            {periodosSugeridos.length > 0 && (
+              <div className="sf-periodos-container animate-fade-in">
+                <div className="sf-periodos-header">
+                  <div className="sf-periodos-icon">
+                    <CalendarRange size={18} />
                   </div>
+                  <div>
+                    <h4 className="sf-periodos-title">Sugestão de Período para Emissão</h4>
+                    <p className="sf-periodos-sub">
+                      Períodos mensais em dias úteis, conforme a carga horária e sem sobreposição, a partir de{' '}
+                      <strong>
+                        {formatDateBR(parseDate(dataEvolucao))}
+                      </strong>:
+                    </p>
+                  </div>
+                </div>
+
+                <div className="sf-periodos-list">
+                  {periodosProcessados.map((p) => {
+                    const conf = aceitesCursos[p.indice] || {};
+                    const isAceito = conf.aceite === 'Aceito';
+                    const isNaoAceito = conf.aceite === 'Não Aceito';
+
+                    return (
+                      <div
+                        key={p.indice}
+                        className={`sf-periodo-card ${p.cancelado && !isNaoAceito ? 'cancelado' : ''}`}
+                      >
+                        <div className="sf-periodo-card-main">
+                          <div className="sf-periodo-info">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              <span className="sf-label">Curso {p.indice} • {formatarTipoComCarga(p)}</span>
+                              {p.ultrapassaHoje && !isNaoAceito && (
+                                <span className="badge-cancelado">
+                                  <XCircle size={12} /> Sugestão Cancelada (Data Futura)
+                                </span>
+                              )}
+                              {isNaoAceito && (
+                                <span className="badge-customizado">
+                                  ✏️ Data Customizada
+                                </span>
+                              )}
+                            </div>
+                            <strong className="sf-periodo-curso" title={p.curso}>{p.curso}</strong>
+                            {p.ultrapassaHoje && !isNaoAceito && (
+                              <span style={{ fontSize: '0.74rem', color: '#f87171' }}>
+                                Término ({p.dataFimFormatada}) ultrapassa a data atual — não é permitida emissão futura. Você pode selecionar "Não Aceito" e informar uma data de conclusão válida.
+                              </span>
+                            )}
+                          </div>
+                          <div className="sf-periodo-datas">
+                            <Clock size={13} />
+                            <span>{p.dataInicioFormatada} até {p.dataFimFormatada}</span>
+                          </div>
+                        </div>
+
+                        {/* Seletor de Aceite Individual */}
+                        <div className="sf-aceite-container">
+                          <div className="sf-aceite-header">
+                            <span className="sf-aceite-prompt">Você aceita este período proposto?</span>
+                            <div className="sf-aceite-btn-group">
+                              <button
+                                type="button"
+                                className={`btn-aceite ${isAceito ? 'active-aceito' : ''}`}
+                                onClick={() => escolherAceite(p.indice, 'Aceito')}
+                              >
+                                <CheckCircle2 size={13} /> Aceito
+                              </button>
+                              <button
+                                type="button"
+                                className={`btn-aceite ${isNaoAceito ? 'active-nao-aceito' : ''}`}
+                                onClick={() => escolherAceite(p.indice, 'Não Aceito')}
+                              >
+                                <XCircle size={13} /> Não Aceito
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Campo "Data de Conclusão" quando "Não Aceito" */}
+                          {isNaoAceito && (
+                            <div className="sf-custom-date-box animate-fade-in">
+                              <label className="sf-custom-date-label">
+                                Data de Conclusão
+                              </label>
+                              <div className="sf-custom-input-row">
+                                <div className="input-with-icon sf-date" style={{ maxWidth: 220 }}>
+                                  <Calendar size={15} className="field-icon" />
+                                  <input
+                                    type="date"
+                                    className="form-input form-input-sm"
+                                    max={hoje}
+                                    value={conf.dataConclusao || ''}
+                                    onChange={(e) => escolherDataConclusao(p.indice, e.target.value)}
+                                  />
+                                </div>
+                                {conf.valida && (
+                                  <span className="sf-custom-date-preview">
+                                    Novo período: <strong>{conf.dataInicioFormatada} até {conf.dataFimFormatada}</strong>
+                                  </span>
+                                )}
+                              </div>
+
+                              {conf.erro && (
+                                <div className="lookup-error animate-fade-in" style={{ marginTop: 6 }}>
+                                  <AlertCircle size={14} />
+                                  <span>{conf.erro}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         )}
+      </section>
+
+      {/* Informações sobre LGPD */}
+      <section className="sf-card sf-lgpd-card">
+        <div className="sf-lgpd-header">
+          <ShieldCheck size={18} className="text-emerald" />
+          <h3 className="sf-lgpd-title">Proteção de Dados Pessoais (LGPD)</h3>
+        </div>
+        <p className="sf-lgpd-text">
+          Em conformidade com a <strong>Lei Geral de Proteção de Dados (Lei nº 13.709/2018)</strong>, os dados pessoais e funcionais informados neste formulário são utilizados estritamente para verificação dos requisitos pedagógicos e emissão do seu certificado, sendo tratados com sigilo e segurança.
+        </p>
       </section>
 
       {/* Confirmação */}

@@ -128,7 +128,7 @@ export function validarDataEvolucao17Meses(dataEvolucaoStr, dataHoje = new Date(
   if (dataEvolucaoISO < limite17MesesISO) {
     return {
       valida: false,
-      erro: 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão',
+      erro: 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.',
       limite17MesesISO
     };
   }
@@ -178,7 +178,7 @@ export function validarDataCustomizada(dataInicioStr, dataHoje = new Date()) {
   if (dataInicioISO < limite17MesesISO) {
     return {
       valida: false,
-      erro: 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão',
+      erro: 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.',
       dataInicioISO,
       dataFimISO: '',
       dataInicioFormatada: formatDateBR(dataInicio),
@@ -240,7 +240,7 @@ export function parseCargaHoraria(valor) {
  * `estimada` indica que a carga do curso era desconhecida ou sem regra e foi usado o padrão do tipo.
  */
 export function mesesDoPeriodo(cargaHoras, tipoCurso) {
-  const carga = parseCargaHoraria(cargaHoras);
+  const carga = parseCargaHoraria(cargaHoras) ?? parseCargaHoraria(tipoCurso);
   if (carga !== null && MESES_POR_CARGA[carga]) {
     return { meses: MESES_POR_CARGA[carga], cargaConsiderada: carga, estimada: false };
   }
@@ -248,6 +248,9 @@ export function mesesDoPeriodo(cargaHoras, tipoCurso) {
   const padrao = tipo.startsWith('aperfeicoamento') ? CARGA_PADRAO_POR_TIPO.aperfeicoamento : CARGA_PADRAO_POR_TIPO.extensao;
   return { meses: MESES_POR_CARGA[padrao], cargaConsiderada: padrao, estimada: true };
 }
+
+/** Janela mínima obrigatória (em dias corridos) entre as datas de conclusão dos cursos. */
+export const MIN_DIAS_ENTRE_CONCLUSOES = 30;
 
 /** Dia não útil: sábado, domingo ou feriado (ver feriados.js). */
 const ehDiaNaoUtil = (d) => d.getDay() === 0 || d.getDay() === 6 || ehFeriado(d);
@@ -266,11 +269,38 @@ export function ultimoDiaUtilDoMes(ano, mes) {
   return d;
 }
 
-/** Último dia útil em ou antes da data (para datas que caem em fim de semana). */
+/** Último dia útil em ou antes da data (para datas que caem em fim de semana ou feriado). */
 export function diaUtilAnterior(date) {
   let d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   while (ehDiaNaoUtil(d)) d = addDays(d, -1);
   return d;
+}
+
+/** Primeiro dia útil em ou após a data (para datas que caem em fim de semana ou feriado). */
+export function proximoDiaUtil(date) {
+  let d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  while (ehDiaNaoUtil(d)) d = addDays(d, 1);
+  return d;
+}
+
+/** Diferença em dias corridos (dataB - dataA), ignorando horário/fuso. */
+export function diasEntreDatas(dataA, dataB) {
+  const a = typeof dataA === 'string' ? parseDate(dataA) : dataA;
+  const b = typeof dataB === 'string' ? parseDate(dataB) : dataB;
+  if (!a || !b || isNaN(a.getTime()) || isNaN(b.getTime())) return 0;
+  const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+  const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+  return Math.round((utcB - utcA) / (1000 * 60 * 60 * 24));
+}
+
+/** Calcula a data de início (1º dia útil do mês correspondente) a partir da data de conclusão e duração em meses. */
+export function calcularInicioPorFim(dataFim, meses = 1) {
+  let inicio = primeiroDiaUtilDoMes(dataFim.getFullYear(), dataFim.getMonth() - (meses - 1));
+  // Se a conclusão cair no próprio 1º dia útil do mês (ex: 01/07 com curso de 1 mês), recua 1 mês para formar o período
+  if (inicio >= dataFim) {
+    inicio = primeiroDiaUtilDoMes(dataFim.getFullYear(), dataFim.getMonth() - meses);
+  }
+  return inicio;
 }
 
 /** Período que começa no 1º dia útil do mês informado e termina no último dia útil do mês final (início + meses - 1). */
@@ -306,7 +336,7 @@ export function validarDataConclusao(dataConclusaoStr, dataHoje = new Date(), me
   if (!digitada || isNaN(digitada.getTime())) return vazio;
 
   const dataFim = diaUtilAnterior(digitada);
-  const dataInicio = primeiroDiaUtilDoMes(dataFim.getFullYear(), dataFim.getMonth() - (meses - 1));
+  const dataInicio = calcularInicioPorFim(dataFim, meses);
   const resultado = {
     dataInicioISO: formatDateISO(dataInicio),
     dataFimISO: formatDateISO(dataFim),
@@ -318,7 +348,7 @@ export function validarDataConclusao(dataConclusaoStr, dataHoje = new Date(), me
     return {
       ...resultado,
       valida: false,
-      erro: 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão'
+      erro: 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.'
     };
   }
 
@@ -341,7 +371,7 @@ export function validarDataConclusao(dataConclusaoStr, dataHoje = new Date(), me
  *   (45h = 1 mês, 100h = 2 meses, 180h = 3 meses; ver mesesDoPeriodo).
  * - O 1º curso começa no primeiro mês cujo 1º dia útil é posterior à data da evolução
  *   (ou, sem evolução / evolução anterior ao limite, em ou depois do limite de 17 meses).
- * - Cursos sequenciais, sem sobreposição: o seguinte começa no mês após o término do anterior.
+ * - Cursos sequenciais, sem sobreposição e com janela mínima de 30 dias entre datas de conclusão.
  * - Períodos que terminam depois de hoje são marcados como cancelados (data futura).
  * @param {string} dataEvolucao - Data no formato YYYY-MM-DD
  * @param {Array} cursos - Lista de cursos do aluno (com tipoCurso e cargaHoraria)
@@ -366,10 +396,22 @@ export function gerarSugestoesPeriodos(dataEvolucao, cursos = [], dataHoje = new
   while (!comeca(ano, mes)) mes++;
 
   const periodos = [];
+  let fimAnterior = null;
+
   for (let i = 0; i < cursos.length; i++) {
     const curso = cursos[i];
     const { meses, cargaConsiderada, estimada } = mesesDoPeriodo(curso.cargaHoraria, curso.tipoCurso);
-    const { inicio, fim } = periodoMensal(ano, mes, meses);
+    let { inicio, fim } = periodoMensal(ano, mes, meses);
+
+    // Garante janela mínima de 30 dias entre as datas de conclusão
+    if (fimAnterior && diasEntreDatas(fimAnterior, fim) < MIN_DIAS_ENTRE_CONCLUSOES) {
+      fim = proximoDiaUtil(addDays(fimAnterior, MIN_DIAS_ENTRE_CONCLUSOES));
+      inicio = calcularInicioPorFim(fim, meses);
+      if (inicio <= fimAnterior) {
+        inicio = proximoDiaUtil(addDays(fimAnterior, 1));
+      }
+    }
+
     const ultrapassaHoje = fim > hojeMeiaNoite;
 
     periodos.push({
@@ -393,6 +435,7 @@ export function gerarSugestoesPeriodos(dataEvolucao, cursos = [], dataHoje = new
       motivoCancelamento: ultrapassaHoje ? 'O término da extensão ultrapassa a data atual.' : null
     });
 
+    fimAnterior = fim;
     // Próximo curso começa no mês seguinte ao término deste
     const proximo = new Date(fim.getFullYear(), fim.getMonth() + 1, 1);
     ano = proximo.getFullYear();
@@ -400,4 +443,115 @@ export function gerarSugestoesPeriodos(dataEvolucao, cursos = [], dataHoje = new
   }
 
   return periodos;
+}
+
+/**
+ * Recalcula os períodos quando o aluno informa uma nova data de conclusão em "Não Aceito",
+ * garantindo a janela mínima de 30 dias entre as datas de conclusão dos demais certificados.
+ * Retorna a nova lista de períodos e os índices dos demais cursos que tiveram suas datas alteradas.
+ *
+ * @param {Array} periodosAtuais - Lista atual de períodos (com dataInicio, dataFim, mesesPeriodo, etc.)
+ * @param {number} indiceEditado - Índice (1-based) do curso cuja data de conclusão foi alterada
+ * @param {string} novaDataConclusaoStr - Nova data de conclusão informada (YYYY-MM-DD)
+ * @param {Date} [dataHoje] - Data de referência (padrão: hoje)
+ * @returns {{ periodos: Array, indicesModificados: number[], validacaoEditado: object }}
+ */
+export function recalcularPeriodosComJanela30Dias(
+  periodosAtuais = [],
+  indiceEditado,
+  novaDataConclusaoStr,
+  dataHoje = new Date()
+) {
+  const copia = periodosAtuais.map((p) => ({ ...p }));
+  const posEditado = copia.findIndex((p) => p.indice === indiceEditado);
+  if (posEditado === -1) {
+    return {
+      periodos: copia,
+      indicesModificados: [],
+      validacaoEditado: { valida: false, erro: 'Curso não encontrado.' }
+    };
+  }
+
+  const cursoEditado = copia[posEditado];
+  const mesesEditado = cursoEditado.mesesPeriodo || mesesDoPeriodo(cursoEditado.cargaHoraria, cursoEditado.tipoCurso).meses;
+  const validacaoEditado = validarDataConclusao(novaDataConclusaoStr, dataHoje, mesesEditado);
+
+  if (!validacaoEditado.valida) {
+    return {
+      periodos: copia,
+      indicesModificados: [],
+      validacaoEditado
+    };
+  }
+
+  const hojeMeiaNoite = new Date(dataHoje.getFullYear(), dataHoje.getMonth(), dataHoje.getDate());
+  const aplicarDatasNoCurso = (item, inicioDate, fimDate) => {
+    const ultrapassaHoje = fimDate > hojeMeiaNoite;
+    return {
+      ...item,
+      dataInicio: formatDateISO(inicioDate),
+      dataFim: formatDateISO(fimDate),
+      dataInicioFormatada: formatDateBR(inicioDate),
+      dataFimFormatada: formatDateBR(fimDate),
+      ultrapassaHoje,
+      cancelado: ultrapassaHoje,
+      status: ultrapassaHoje ? 'CANCELADO_DATA_FUTURA' : 'APROVADO',
+      motivoCancelamento: ultrapassaHoje ? 'O término da extensão ultrapassa a data atual.' : null
+    };
+  };
+
+  // Atualiza o curso editado
+  copia[posEditado] = aplicarDatasNoCurso(
+    cursoEditado,
+    parseDate(validacaoEditado.dataInicioISO),
+    parseDate(validacaoEditado.dataFimISO)
+  );
+
+  const indicesModificados = [];
+
+  // Ajuste para trás (cursos anteriores ao editado): garante que fim[i] <= fim[i+1] - 30 dias
+  for (let i = posEditado - 1; i >= 0; i--) {
+    const atual = copia[i];
+    const seguinte = copia[i + 1];
+    const fimAtual = parseDate(atual.dataFim);
+    const fimSeguinte = parseDate(seguinte.dataFim);
+
+    if (diasEntreDatas(fimAtual, fimSeguinte) < MIN_DIAS_ENTRE_CONCLUSOES) {
+      const meses = atual.mesesPeriodo || mesesDoPeriodo(atual.cargaHoraria, atual.tipoCurso).meses;
+      const novoFim = diaUtilAnterior(addDays(fimSeguinte, -MIN_DIAS_ENTRE_CONCLUSOES));
+      const novoInicio = calcularInicioPorFim(novoFim, meses);
+      const atualizado = aplicarDatasNoCurso(atual, novoInicio, novoFim);
+
+      if (atualizado.dataInicio !== atual.dataInicio || atualizado.dataFim !== atual.dataFim) {
+        indicesModificados.push(atual.indice);
+      }
+      copia[i] = atualizado;
+    }
+  }
+
+  // Ajuste para frente (cursos posteriores ao editado): garante que fim[i] >= fim[i-1] + 30 dias
+  for (let i = posEditado + 1; i < copia.length; i++) {
+    const anterior = copia[i - 1];
+    const atual = copia[i];
+    const fimAnterior = parseDate(anterior.dataFim);
+    const fimAtual = parseDate(atual.dataFim);
+
+    if (diasEntreDatas(fimAnterior, fimAtual) < MIN_DIAS_ENTRE_CONCLUSOES) {
+      const meses = atual.mesesPeriodo || mesesDoPeriodo(atual.cargaHoraria, atual.tipoCurso).meses;
+      const novoFim = proximoDiaUtil(addDays(fimAnterior, MIN_DIAS_ENTRE_CONCLUSOES));
+      const novoInicio = calcularInicioPorFim(novoFim, meses);
+      const atualizado = aplicarDatasNoCurso(atual, novoInicio, novoFim);
+
+      if (atualizado.dataInicio !== atual.dataInicio || atualizado.dataFim !== atual.dataFim) {
+        indicesModificados.push(atual.indice);
+      }
+      copia[i] = atualizado;
+    }
+  }
+
+  return {
+    periodos: copia,
+    indicesModificados,
+    validacaoEditado
+  };
 }

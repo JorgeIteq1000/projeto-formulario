@@ -109,7 +109,7 @@ describe('Worker M3 Integration Tests', () => {
       assert.strictEqual(res.valida, false);
       assert.strictEqual(
         res.erro,
-        'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão'
+        'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.'
       );
     });
 

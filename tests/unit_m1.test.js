@@ -50,7 +50,7 @@ test('subtractMonths correctly subtracts months with day clipping and boundary c
 
 test('validarDataEvolucao17Meses accepts dates within 17 months and rejects older dates', () => {
   const refDate = new Date(2026, 9, 28); // 28/10/2026 -> 17 months ago is 2025-05-28
-  const exactError = 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão';
+  const exactError = 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.';
 
   // Exactly on boundary (2025-05-28) -> Valid
   const resBoundary = validarDataEvolucao17Meses('2025-05-28', refDate);
@@ -96,7 +96,7 @@ test('validarDataCustomizada validates 17 months and future completion', () => {
   // Custom date too old (< 17 months)
   const oldCustom = validarDataCustomizada('2025-05-20', refDate);
   assert.equal(oldCustom.valida, false);
-  assert.equal(oldCustom.erro, 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão');
+  assert.equal(oldCustom.erro, 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.');
 
   // Custom date with end > today (e.g. start 2026-10-15 -> end 2026-11-15 > 2026-10-28)
   const futureCustom = validarDataCustomizada('2026-10-15', refDate);

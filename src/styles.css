@@ -2045,7 +2045,10 @@ body {
 .sf-course strong {
   color: #fff;
   font-size: 0.92rem;
-  line-height: 1.35;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .sf-options {
@@ -2200,7 +2203,7 @@ a.btn-card-primary {
 
 .sf-periodo-card-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
@@ -2337,9 +2340,41 @@ a.btn-card-primary {
   font-size: 0.85rem;
   font-weight: 600;
   color: #f1f5f9;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.4;
+}
+
+/* LGPD */
+.sf-lgpd-card {
+  background: rgba(16, 185, 129, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.sf-lgpd-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sf-lgpd-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #34d399;
+  margin: 0;
+}
+
+.sf-lgpd-text {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #94a3b8;
+  margin: 0;
+}
+
+.sf-lgpd-text strong {
+  color: #e2e8f0;
 }
 
 .sf-periodo-datas {

@@ -19,7 +19,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const EXACT_ERROR_TEXT = 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão';
+const EXACT_ERROR_TEXT = 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.';
 
 // ============================================================================
 // SUITE 1: ADVERSARIAL CALENDAR MATH & SUBTRACT MONTHS (17 MONTHS)
@@ -173,7 +173,7 @@ test('ADV-2.4: Character-by-character and byte verification of exact error text'
   const refDate = parseDate('2026-10-28');
   const res = validarDataEvolucao17Meses('2020-01-01', refDate);
 
-  const expected = 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão';
+  const expected = 'O período não pode ser contabilizado. Entre em contato com a Central de Atendimento, pelo telefone (11) 2074-5110, no setor de Emissão.';
   assert.equal(res.erro, expected);
 
   // Character code match to ensure no encoding corruption

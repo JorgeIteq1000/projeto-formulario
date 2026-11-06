@@ -8,6 +8,9 @@ import {
   primeiroDiaUtilDoMes,
   ultimoDiaUtilDoMes,
   gerarSugestoesPeriodos,
+  recalcularPeriodosComJanela30Dias,
+  diasEntreDatas,
+  MIN_DIAS_ENTRE_CONCLUSOES,
   validarDataConclusao,
   formatDateISO
 } from '../src/utils/dateSuggestions.js';
@@ -126,7 +129,7 @@ test('validarDataConclusao: bloqueia futuro e início anterior ao limite de 17 m
 
   const antigo = validarDataConclusao('2025-06-10', HOJE, 1); // início 02/06/2025 < 03/06/2025
   assert.equal(antigo.valida, false);
-  assert.match(antigo.erro, /Período não pode ser contabilizado/);
+  assert.match(antigo.erro, /período não pode ser contabilizado/i);
   assert.equal(validarDataConclusao('', HOJE, 1).valida, false);
 });
 
@@ -164,4 +167,40 @@ test('120h segue a regra das 100h (2 meses)', () => {
   assert.equal(a.mesesPeriodo, 2);
   assert.equal(a.cargaEstimada, false);
   assert.deepEqual([a.dataInicio, a.dataFim], ['2026-07-01', '2026-08-31']);
+});
+
+test('recalcularPeriodosComJanela30Dias: garante janela mínima de 30 dias entre datas de conclusão e retorna índices modificados', () => {
+  const cursos = [
+    { curso: 'A NECESSIDADE DA FORMAÇÃO CONTINUADA PARA OS PROFESSORES', tipoCurso: 'Extensão 45h', cargaHoraria: '' },
+    { curso: 'A LUDICIDADE E A RELAÇÃO ENTRE BRINCAR E O APRENDER', tipoCurso: 'Extensão 45h', cargaHoraria: '' },
+    { curso: 'INCLUSÃO NA EDUCAÇÃO: TEORIA E APLICAÇÃO', tipoCurso: 'Extensão 100h', cargaHoraria: '' },
+    { curso: 'NEUROPSICOPEDAGOGIA E APRENDIZAGEM', tipoCurso: 'Extensão 100h', cargaHoraria: '100h' }
+  ];
+  const sugeridos = gerarSugestoesPeriodos('2026-02-16', cursos, HOJE);
+  // Verifica que todos os períodos sugeridos já respeitam >= 30 dias entre conclusões
+  for (let i = 1; i < sugeridos.length; i++) {
+    assert.ok(
+      diasEntreDatas(sugeridos[i - 1].dataFim, sugeridos[i].dataFim) >= MIN_DIAS_ENTRE_CONCLUSOES,
+      `Esperado >= 30 dias entre curso ${i} (${sugeridos[i - 1].dataFim}) e curso ${i + 1} (${sugeridos[i].dataFim})`
+    );
+  }
+
+  // Aluno altera conclusão do Curso 1 para 01/07/2026
+  const recalc = recalcularPeriodosComJanela30Dias(sugeridos, 1, '2026-07-01', HOJE);
+  assert.equal(recalc.validacaoEditado.valida, true);
+  assert.equal(recalc.periodos[0].dataInicio, '2026-06-01');
+  assert.equal(recalc.periodos[0].dataFim, '2026-07-01');
+
+  // Curso 2 (que terminava antes de 31/07/2026) deve ser ajustado para ter no mínimo 30 dias após 01/07/2026 -> 31/07/2026
+  assert.equal(recalc.periodos[1].dataFim, '2026-07-31');
+  assert.ok(diasEntreDatas(recalc.periodos[0].dataFim, recalc.periodos[1].dataFim) >= 30);
+  assert.ok(recalc.indicesModificados.includes(2));
+
+  // Todos os cursos subsequentes também respeitam a janela mínima de 30 dias entre conclusões
+  for (let i = 1; i < recalc.periodos.length; i++) {
+    assert.ok(
+      diasEntreDatas(recalc.periodos[i - 1].dataFim, recalc.periodos[i].dataFim) >= MIN_DIAS_ENTRE_CONCLUSOES,
+      `Esperado >= 30 dias entre curso ${i} (${recalc.periodos[i - 1].dataFim}) e curso ${i + 1} (${recalc.periodos[i].dataFim})`
+    );
+  }
 });

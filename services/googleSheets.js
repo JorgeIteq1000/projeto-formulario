@@ -195,6 +195,7 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
           rg: headers.findIndex(h => h === 'RG' || h.startsWith('RG ')),
           naturalidade: headers.findIndex(h => h.includes('NATURALIDADE')),
           cargaHoraria: headers.findIndex(h => h.includes('CARGA')),
+          protocolo: headers.findIndex(h => h.includes('PROTOCOLO')),
           token: headers.findIndex(h => h === 'TOKEN'),
           link: headers.findIndex(h => h === 'LINK' || h.includes('FORMULARIO'))
         };
@@ -220,6 +221,7 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             rg: idx.rg !== -1 ? r[idx.rg] || '' : '',
             naturalidade: idx.naturalidade !== -1 ? r[idx.naturalidade] || '' : '',
             cargaHoraria: idx.cargaHoraria !== -1 ? r[idx.cargaHoraria] || '' : '',
+            protocolo: idx.protocolo !== -1 ? r[idx.protocolo] || '' : '',
             statusOriginal: idx.status !== -1 ? r[idx.status] : ''
           });
         }
@@ -255,17 +257,31 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
   return { fonte: 'vazio', dados: [], clientEmail: email };
 }
 
+// Converte índice de coluna 0-based para notação A1 (0 -> A, 8 -> I, 18 -> S, 26 -> AA)
+export function idxParaColunaA1(colIdx) {
+  let n = colIdx;
+  let col = '';
+  while (n >= 0) {
+    col = String.fromCharCode(65 + (n % 26)) + col;
+    n = Math.floor(n / 26) - 1;
+  }
+  return col;
+}
+
 /**
  * Registra a resposta do aluno no Google Sheets (se ativo)
- * Atualiza o STATUS DO EVENTO para 'EMITIR' nas linhas do aluno.
+ * Atualiza o STATUS DO EVENTO para 'EMITIR' e grava o número de Protocolo
+ * em todas as linhas correspondentes à certificação do aluno.
  */
 export async function registrarRespostaNoSheet({
   spreadsheetId,
   token,
   resposta,
-  linkInfo
+  linkInfo,
+  sheetsOverride = null
 }) {
-  const { sheets } = inicializarGoogleAuth();
+  const { sheets: authSheets } = sheetsOverride ? { sheets: sheetsOverride } : inicializarGoogleAuth();
+  const sheets = sheetsOverride || authSheets;
   if (!sheets || !spreadsheetId) {
     return { atualizado: false, motivo: 'Planilha não configurada' };
   }
@@ -280,9 +296,10 @@ export async function registrarRespostaNoSheet({
     });
     const headers = (headerRes.data.values && headerRes.data.values[0]) || [];
 
-    // Localiza colunas de CPF e STATUS DO EVENTO
-    const colCpfIdx = headers.findIndex(h => (h || '').toString().toUpperCase() === 'CPF');
-    const colStatusIdx = headers.findIndex(h => (h || '').toString().toUpperCase().includes('STATUS'));
+    // Localiza colunas de CPF, STATUS DO EVENTO e PROTOCOLO
+    const colCpfIdx = headers.findIndex(h => semAcento(h) === 'CPF');
+    const colStatusIdx = headers.findIndex(h => semAcento(h).includes('STATUS'));
+    let colProtocoloIdx = headers.findIndex(h => semAcento(h).includes('PROTOCOLO'));
 
     if (colCpfIdx === -1) {
       return { atualizado: false, motivo: 'Coluna CPF não encontrada' };
@@ -294,32 +311,54 @@ export async function registrarRespostaNoSheet({
     });
     const rows = rowsRes.data.values || [];
 
-    const cpfBuscado = (linkInfo?.cpf || '').replace(/\D/g, '');
+    const cpfRawLink = String(linkInfo?.cpf || '').replace(/\D/g, '');
+    const cpfBuscado = cpfRawLink ? cpfRawLink.padStart(11, '0') : '';
+    const protocoloValor = resposta?.protocolo || '';
     const updates = [];
+    let linhasAfetadas = 0;
 
-    // Função auxiliar para converter índice numérico (0 -> A, 8 -> I)
-    const idxParaLetra = (colIdx) => String.fromCharCode(65 + colIdx);
+    // Se a coluna Protocolo não existir no cabeçalho, cria na próxima coluna disponível
+    if (colProtocoloIdx === -1 && protocoloValor) {
+      colProtocoloIdx = headers.length;
+      const letraColProto = idxParaColunaA1(colProtocoloIdx);
+      updates.push({
+        range: `'${nomeAba}'!${letraColProto}1`,
+        values: [['Protocolo']]
+      });
+    }
 
     for (let i = 1; i < rows.length; i++) {
-      const rowCpf = (rows[i][colCpfIdx] || '').toString().replace(/\D/g, '');
+      const rowCpfDigits = (rows[i][colCpfIdx] || '').toString().replace(/\D/g, '');
+      const rowCpf = rowCpfDigits ? rowCpfDigits.padStart(11, '0') : '';
       if (rowCpf && rowCpf === cpfBuscado) {
         const numLinha = i + 1;
-        // Se a coluna de status existir (geralmente I = STATUS DO EVENTO)
+        linhasAfetadas++;
+
+        // Atualiza a coluna de status (ex: I = STATUS DO EVENTO)
         if (colStatusIdx !== -1) {
-          const letraCol = idxParaLetra(colStatusIdx);
+          const letraColStatus = idxParaColunaA1(colStatusIdx);
           updates.push({
-            range: `'${nomeAba}'!${letraCol}${numLinha}`,
+            range: `'${nomeAba}'!${letraColStatus}${numLinha}`,
             values: [['EMITIR']]
+          });
+        }
+
+        // Grava o número de protocolo na coluna Protocolo (ex: S = Protocolo) em todas as linhas do aluno
+        if (colProtocoloIdx !== -1 && protocoloValor) {
+          const letraColProto = idxParaColunaA1(colProtocoloIdx);
+          updates.push({
+            range: `'${nomeAba}'!${letraColProto}${numLinha}`,
+            values: [[protocoloValor]]
           });
         }
       }
     }
 
-    if (!updates.length) {
+    if (!linhasAfetadas) {
       return { atualizado: false, motivo: 'Nenhuma linha encontrada para o CPF' };
     }
 
-    // Executa batchUpdate para atualizar todas as linhas do aluno
+    // Executa batchUpdate para atualizar todas as linhas do aluno (status EMITIR + Protocolo)
     await sheets.spreadsheets.values.batchUpdate({
       spreadsheetId,
       resource: {
@@ -328,12 +367,12 @@ export async function registrarRespostaNoSheet({
       }
     });
 
-    console.log(`✅ [GOOGLE SHEETS] Atualizadas ${updates.length} linha(s) para status EMITIR (CPF: ${cpfBuscado}, Protocolo: ${resposta.protocolo})`);
+    console.log(`✅ [GOOGLE SHEETS] Atualizadas ${linhasAfetadas} linha(s) com status EMITIR e Protocolo ${protocoloValor} (CPF: ${cpfBuscado})`);
 
     return {
       atualizado: true,
-      linhasAfetadas: updates.length,
-      protocolo: resposta.protocolo
+      linhasAfetadas,
+      protocolo: protocoloValor
     };
   } catch (err) {
     console.error('❌ Erro ao atualizar resposta no Google Sheets:', err.message);
