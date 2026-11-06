@@ -1,0 +1,557 @@
+import express from 'express';
+import cors from 'cors';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import dotenv from 'dotenv';
+import {
+  carregarSolicitacoes,
+  registrarRespostaNoSheet,
+  inicializarGoogleAuth,
+  carregarDadosAlunos
+} from './services/googleSheets.js';
+import { criarCardAlunoSPA } from './services/bitrix24.js';
+import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
+import { tipoCursoNoEscopo } from './services/escopo.js';
+import { buscarCargaHoraria } from './services/cargaHoraria.js';
+import {
+  validarDataEvolucao17Meses,
+  validarDataConclusao,
+  mesesDoPeriodo
+} from './src/utils/dateSuggestions.js';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Helper para descobrir o IP local da máquina na rede (Wi-Fi / Ethernet)
+export function obterIpLocal() {
+  const nets = os.networkInterfaces();
+  let wifiIp = null;
+  let ethIp = null;
+  let fallbackIp = null;
+
+  for (const name of Object.keys(nets)) {
+    const nomeNorm = name.toLowerCase();
+    const isVirtual =
+      nomeNorm.includes('vmware') ||
+      nomeNorm.includes('virtual') ||
+      nomeNorm.includes('radmin') ||
+      nomeNorm.includes('vbox') ||
+      nomeNorm.includes('pseudo');
+
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        // Ignora faixa 192.168.56.x (VirtualBox Host-Only Adapter)
+        if (net.address.startsWith('192.168.56.')) continue;
+        if (isVirtual) continue;
+
+        if (nomeNorm.includes('wi-fi') || nomeNorm.includes('wifi') || nomeNorm.includes('wlan')) {
+          wifiIp = net.address;
+        } else if (nomeNorm.includes('ethernet') || nomeNorm.includes('eth')) {
+          ethIp = net.address;
+        } else if (!fallbackIp) {
+          fallbackIp = net.address;
+        }
+      }
+    }
+  }
+
+  return wifiIp || ethIp || fallbackIp || 'localhost';
+}
+
+const ipLocal = obterIpLocal();
+
+// ============================================
+// CONFIGURAÇÃO
+// ============================================
+const PORT = process.env.PORT || 3000;
+const FRONTEND_PORT = process.env.FRONTEND_PORT || 5180;
+// Segredo usado para assinar os links individuais
+const LINK_SECRET_DEV = 'dev-secret-certificados-ies-2026';
+let LINK_SECRET = process.env.LINK_SECRET;
+if (!LINK_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('❌ LINK_SECRET não configurado. Defina um segredo forte no .env antes de rodar em produção.');
+    process.exit(1);
+  }
+  console.warn('⚠️  LINK_SECRET não configurado: usando segredo de desenvolvimento (não use em produção).');
+  LINK_SECRET = LINK_SECRET_DEV;
+}
+// URL pública do formulário (se vazio ou localhost, adapta automaticamente para o IP da rede)
+const PUBLIC_FORM_URL = (process.env.PUBLIC_FORM_URL || '').replace(/\/+$/, '');
+// ID da planilha no Google Sheets (se vazio, usa a base local de forma transparente)
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || null;
+// Modo somente leitura: a planilha é lida normalmente, mas o status EMITIR não é gravado nela (útil em testes locais)
+const SHEET_SOMENTE_LEITURA = ['1', 'true', 'sim'].includes(String(process.env.GOOGLE_SHEET_SOMENTE_LEITURA || '').toLowerCase());
+// Janela de agrupamento das solicitações em um único link (24 horas)
+const JANELA_HORAS = 24;
+
+// Arquivo onde as respostas ficam salvas para sobreviver a reinícios (contém dados pessoais; fora do git)
+const RESPOSTAS_FILE = process.env.RESPOSTAS_FILE
+  ? path.resolve(process.env.RESPOSTAS_FILE)
+  : path.join(__dirname, 'data', 'respostas.json');
+
+const REDES_VALIDAS = ['particular', 'estadual', 'municipal'];
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '1mb' }));
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// ============================================
+// HELPERS
+// ============================================
+// CPF sempre com 11 dígitos (a planilha perde zeros à esquerda)
+const normalizarCpf = (cpf) => (cpf || '').toString().replace(/\D/g, '').padStart(11, '0');
+
+const formatarCpf = (cpf) =>
+  normalizarCpf(cpf).replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+
+// "13/08/2026" ou "2026-08-13" -> Date
+function parseDataBR(str) {
+  if (!str) return null;
+  const s = String(str).trim();
+  // Formato BR: DD/MM/YYYY
+  const mBR = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(s);
+  if (mBR) return new Date(Number(mBR[3]), Number(mBR[2]) - 1, Number(mBR[1]));
+  // Formato ISO: YYYY-MM-DD
+  const mISO = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (mISO) return new Date(Number(mISO[1]), Number(mISO[2]) - 1, Number(mISO[3]));
+  const parsed = new Date(s);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Token determinístico: o mesmo aluno + mesma janela gera sempre o mesmo link
+function gerarToken(cpf, dataReferencia) {
+  return crypto
+    .createHmac('sha256', LINK_SECRET)
+    .update(`${cpf}|${dataReferencia}`)
+    .digest('base64url')
+    .slice(0, 22);
+}
+
+// ============================================
+// CARGA DA BASE (Google Sheets com fallback local)
+// ============================================
+const links = new Map();
+const respostas = carregarRespostas(RESPOSTAS_FILE);
+// Tokens com envio em andamento: impede dois envios simultâneos (duplo clique) de criar dois cards
+const enviosEmAndamento = new Set();
+if (respostas.size) console.log(`💾 ${respostas.size} resposta(s) restaurada(s) de ${RESPOSTAS_FILE}.`);
+let totalSolicitacoes = 0;
+let statusIntegracao = {
+  fonte: 'inicializando',
+  clientEmail: null,
+  sheetId: GOOGLE_SHEET_ID
+};
+
+async function carregarBase() {
+  links.clear();
+  const res = await carregarSolicitacoes({ spreadsheetId: GOOGLE_SHEET_ID });
+  // O formulário atende apenas Extensão e Aperfeiçoamento: demais tipos são ignorados
+  const todasLinhas = res.dados || [];
+  const linhas = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso));
+  if (linhas.length < todasLinhas.length) {
+    console.log(`ℹ️  ${todasLinhas.length - linhas.length} solicitação(ões) ignorada(s) por tipo de curso fora do escopo (apenas Extensão e Aperfeiçoamento).`);
+  }
+  totalSolicitacoes = linhas.length;
+  statusIntegracao = {
+    fonte: res.fonte,
+    clientEmail: res.clientEmail,
+    sheetId: GOOGLE_SHEET_ID
+  };
+
+  // Dados pessoais (nascimento, RG, naturalidade) vêm da aba DADOS_ALUNOS, por CPF
+  const dadosPessoais = await carregarDadosAlunos({ spreadsheetId: GOOGLE_SHEET_ID });
+  statusIntegracao.dadosAlunos = { fonte: dadosPessoais.fonte, total: dadosPessoais.dados.size };
+
+  // Agrupa por CPF
+  const porCpf = new Map();
+  for (const l of linhas) {
+    const cpf = normalizarCpf(l.cpf);
+    if (!cpf) continue;
+    if (!porCpf.has(cpf)) porCpf.set(cpf, []);
+    porCpf.get(cpf).push(l);
+  }
+
+  // Para cada aluno: link = solicitações dentro da janela de 24h até a mais recente
+  for (const [cpf, itens] of porCpf) {
+    const datas = itens.map((i) => parseDataBR(i.solicitacao)).filter(Boolean);
+    const maisRecente = datas.length ? new Date(Math.max(...datas)) : new Date();
+    const inicioJanela = new Date(maisRecente.getTime() - JANELA_HORAS * 3600 * 1000);
+
+    const cursos = itens
+      .filter((i) => {
+        const d = parseDataBR(i.solicitacao);
+        if (!d) return true;
+        return d >= inicioJanela && d <= maisRecente;
+      })
+      .map((i) => ({
+        curso: i.curso || 'Curso de Extensão',
+        tipoCurso: i.tipoCurso || 'Extensão',
+        certificadora: i.certificadora || 'Faculdade Certificadora',
+        contrato: i.contrato || '',
+        // Carga da planilha; se ausente, busca no catálogo do Lyra (vazio quando não há correspondência única)
+        cargaHoraria: i.cargaHoraria || buscarCargaHoraria(i.tipoCurso, i.curso, i.certificadora) || '',
+        solicitacao: i.solicitacao || ''
+      }));
+
+    // Dados pessoais exibidos no formulário: usa o primeiro valor preenchido entre as solicitações do aluno
+    // Coluna na aba de solicitações (se existir) tem prioridade; depois a aba DADOS_ALUNOS
+    const extra = dadosPessoais.dados.get(cpf) || {};
+    const primeiroPreenchido = (campo) => (itens.find((i) => i[campo]) || {})[campo] || extra[campo] || '';
+
+    const dataReferencia = maisRecente.toISOString().slice(0, 10);
+    const token = gerarToken(cpf, dataReferencia);
+
+    links.set(token, {
+      token,
+      cpf,
+      nome: itens[0].nome || 'Aluno(a)',
+      telefone: itens[0].telefone || '',
+      dataNascimento: primeiroPreenchido('dataNascimento'),
+      rg: primeiroPreenchido('rg'),
+      naturalidade: primeiroPreenchido('naturalidade'),
+      dataReferencia,
+      cursos
+    });
+  }
+
+  console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais. Dados pessoais: ${statusIntegracao.dadosAlunos.total} aluno(s) [${statusIntegracao.dadosAlunos.fonte}].`);
+}
+
+// Inicializa a carga assíncrona
+carregarBase();
+
+// Monta o link para o aluno (suporta domínio de produção, IP local de rede ou host da requisição)
+function montarUrl(token, req = null) {
+  // Se houver domínio configurado no .env (diferente de localhost), usa ele
+  if (PUBLIC_FORM_URL && !PUBLIC_FORM_URL.includes('localhost')) {
+    return `${PUBLIC_FORM_URL}/solicitacoes/${token}`;
+  }
+
+  // Se a requisição veio de outro computador na rede pelo IP
+  if (req) {
+    const host = req.get('x-forwarded-host') || req.get('host');
+    if (host) {
+      const protocolo = req.protocol || 'http';
+      // Ajusta porta do backend para o frontend no modo dev se necessário
+      const hostFrontend = host.replace(`:${PORT}`, `:${FRONTEND_PORT}`);
+      return `${protocolo}://${hostFrontend}/solicitacoes/${token}`;
+    }
+  }
+
+  // Fallback para o IP da máquina na rede local
+  return `http://${ipLocal}:${FRONTEND_PORT}/solicitacoes/${token}`;
+}
+
+// ============================================
+// ENDPOINTS DO ALUNO (acesso via link individual)
+// ============================================
+
+// Dados do link: nome, CPF e cursos da janela de 24h
+app.get('/api/link/:token', (req, res) => {
+  const link = links.get(req.params.token);
+  if (!link) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
+  }
+
+  const resposta = respostas.get(link.token) || null;
+
+  res.json({
+    sucesso: true,
+    dados: {
+      nome: link.nome,
+      cpf: formatarCpf(link.cpf),
+      dataNascimento: link.dataNascimento,
+      rg: link.rg,
+      naturalidade: link.naturalidade,
+      cursos: link.cursos,
+      jaRespondido: !!resposta,
+      protocolo: resposta?.protocolo || null,
+      respondidoEm: resposta?.dataSubmissaoFormatada || null
+    }
+  });
+});
+
+// Envio do formulário pelo aluno
+app.post('/api/link/:token/resposta', async (req, res) => {
+  const link = links.get(req.params.token);
+  if (!link) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
+  }
+
+  if (respostas.has(link.token) || enviosEmAndamento.has(link.token)) {
+    return res.status(409).json({
+      sucesso: false,
+      mensagem: 'Este formulário já foi enviado. Não é possível alterar após o envio.'
+    });
+  }
+
+  // Reserva o token até a resposta HTTP terminar (sucesso ou erro de validação)
+  enviosEmAndamento.add(link.token);
+  res.on('close', () => enviosEmAndamento.delete(link.token));
+
+  const { professor, rede, prefeituraSP, dataEvolucao, observacao, periodosSugeridos, confirmacao } = req.body || {};
+
+  // Validações (espelham as regras do formulário)
+  if (typeof professor !== 'boolean') {
+    return res.status(400).json({ sucesso: false, mensagem: 'Informe se você é professor(a).' });
+  }
+  if (professor && !REDES_VALIDAS.includes(rede)) {
+    return res.status(400).json({ sucesso: false, mensagem: 'Informe a rede de ensino.' });
+  }
+  if (professor && rede === 'municipal') {
+    if (typeof prefeituraSP !== 'boolean') {
+      return res.status(400).json({ sucesso: false, mensagem: 'Informe se você atua na Prefeitura de SP.' });
+    }
+    // Prefeitura de SP: data da última evolução é OBRIGATÓRIA
+    if (prefeituraSP && !/^\d{4}-\d{2}-\d{2}$/.test(dataEvolucao || '')) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: 'Para a Prefeitura de SP, informe a data da última evolução funcional.'
+      });
+    }
+    // Outro município: data da evolução é OPCIONAL
+    if (!prefeituraSP && dataEvolucao && !/^\d{4}-\d{2}-\d{2}$/.test(dataEvolucao)) {
+      return res.status(400).json({ sucesso: false, mensagem: 'Data de evolução funcional inválida.' });
+    }
+  }
+
+  // Defesa em profundidade: Se data de evolução foi informada, valida limite de 17 meses retroativos
+  if (dataEvolucao) {
+    const valEvolucao = validarDataEvolucao17Meses(dataEvolucao);
+    if (!valEvolucao.valida) {
+      return res.status(400).json({
+        sucesso: false,
+        mensagem: valEvolucao.erro || 'Período não pode ser contabilizado. Entrar em contato com a central de atendimento via telefone 11-2074-5110, setor de Emissão'
+      });
+    }
+  }
+
+  if (confirmacao !== true) {
+    return res.status(400).json({ sucesso: false, mensagem: 'É necessário confirmar que os dados estão corretos.' });
+  }
+
+  const listaPeriodos = Array.isArray(periodosSugeridos) ? periodosSugeridos : [];
+
+  // Defesa em profundidade: Validação de datas customizadas em cursos não aceitos
+  for (const p of listaPeriodos) {
+    if (p && !p.cancelado && !p.ultrapassaHoje && (p.aceite === 'Não Aceito' || p.customizado === true)) {
+      if (!p.dataFimCustomizada) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem: `Informe a data de conclusão para o curso "${p.curso || 'selecionado'}".`
+        });
+      }
+      // A duração do período vem da carga horária do curso no link (não do que o navegador enviou)
+      const cursoDoLink = (link.cursos || []).find((c) => c.contrato && c.contrato === p.contrato) || (link.cursos || [])[(p.indice || 0) - 1] || {};
+      const { meses } = mesesDoPeriodo(cursoDoLink.cargaHoraria, cursoDoLink.tipoCurso || p.tipoCurso);
+      const valCustom = validarDataConclusao(p.dataFimCustomizada, new Date(), meses);
+      if (!valCustom.valida) {
+        return res.status(400).json({
+          sucesso: false,
+          mensagem: valCustom.erro || `Data customizada inválida para o curso "${p.curso || 'selecionado'}".`
+        });
+      }
+      // Sobrescreve com o período recalculado no servidor
+      p.dataInicioCustomizada = valCustom.dataInicioISO;
+      p.dataFimCustomizada = valCustom.dataFimISO;
+      p.dataInicioCustomizadaFormatada = valCustom.dataInicioFormatada;
+      p.dataFimCustomizadaFormatada = valCustom.dataFimFormatada;
+    }
+  }
+
+  // Identifica cursos customizados ("Não Aceito") para rotear revisão Bitrix24 SPA
+  const cursosNaoAceitos = listaPeriodos.filter(
+    (p) => !p.cancelado && !p.ultrapassaHoje && (p.aceite === 'Não Aceito' || p.customizado === true)
+  );
+  const temRevisao = cursosNaoAceitos.length > 0 || Boolean(typeof observacao === 'string' && observacao.trim());
+  const resumoCustomizacao = cursosNaoAceitos.length > 0
+    ? cursosNaoAceitos
+        .map((c) => `• ${c.curso}: Início solicitado ${c.dataInicioCustomizadaFormatada || c.dataInicioFormatada} a ${c.dataFimCustomizadaFormatada || c.dataFimFormatada}`)
+        .join('\n')
+    : null;
+
+  const stageEsperado = temRevisao
+    ? (process.env.BITRIX24_SPA_STAGE_REVISAO || 'DT1046_76:PREPARATION')
+    : (process.env.BITRIX24_SPA_STAGE_DEFAULT || 'DT1046_76:CLIENT');
+
+  const agora = new Date();
+  const registro = {
+    protocolo: `CERT-${agora.getFullYear()}-${crypto.randomInt(100000, 999999)}`,
+    dataSubmissao: agora.toISOString(),
+    dataSubmissaoFormatada: agora.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+    professor,
+    rede: professor ? rede : null,
+    prefeituraSP: professor && rede === 'municipal' ? prefeituraSP : null,
+    dataEvolucao: professor && rede === 'municipal' && dataEvolucao ? dataEvolucao : null,
+    observacao: typeof observacao === 'string' && observacao.trim() ? observacao.trim().slice(0, 1000) : null,
+    periodosSugeridos: listaPeriodos,
+    temRevisao,
+    resumoCustomizacao,
+    statusBitrix: 'EMITIR',
+    bitrixCardId: null,
+    bitrixStageId: stageEsperado
+  };
+
+  // Cursos que serão certificados (apenas cursos elegíveis / não cancelados)
+  const cursosParaCertificar = (listaPeriodos.length > 0)
+    ? listaPeriodos.filter((p) => !p.ultrapassaHoje && !p.cancelado)
+    : (link.cursos || []);
+
+  // Criação do card no Bitrix24 SPA (DT1046_76:CLIENT padrão, ou DT1046_76:PREPARATION com observação/revisão)
+  try {
+    const resBitrix = await criarCardAlunoSPA({
+      nome: link.nome,
+      observacao: registro.observacao,
+      temRevisao,
+      resumoCustomizacao,
+      cursos: cursosParaCertificar,
+      protocolo: registro.protocolo
+    });
+    if (resBitrix.sucesso) {
+      registro.bitrixCardId = resBitrix.id;
+      registro.bitrixStageId = resBitrix.stageId || stageEsperado;
+    } else if (resBitrix.stageId) {
+      registro.bitrixStageId = resBitrix.stageId;
+    }
+  } catch (err) {
+    console.error('❌ Erro inesperado ao criar card no Bitrix24 SPA:', err.message);
+  }
+
+  respostas.set(link.token, registro);
+  try {
+    salvarRespostas(RESPOSTAS_FILE, respostas);
+  } catch (err) {
+    console.error(`❌ Não foi possível salvar as respostas em ${RESPOSTAS_FILE}: ${err.message}`);
+  }
+
+  // Atualização no Google Sheets em segundo plano (se configurado e fora do modo somente leitura)
+  if (SHEET_SOMENTE_LEITURA) {
+    console.log('ℹ️  Planilha em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): status EMITIR não foi gravado.');
+  } else {
+    registrarRespostaNoSheet({
+      spreadsheetId: GOOGLE_SHEET_ID,
+      token: link.token,
+      resposta: registro,
+      linkInfo: link
+    }).catch((err) => console.error('Erro ao registrar resposta no Google Sheets:', err.message));
+  }
+
+  console.log(`✅ [BITRIX24/PLANILHA] ${link.nome} (${formatarCpf(link.cpf)}) → ENTRADA ➜ EMITIR | ${registro.protocolo}${registro.bitrixCardId ? ` | Bitrix SPA ID: ${registro.bitrixCardId} (${registro.bitrixStageId})` : ''}`);
+
+  res.json({
+    sucesso: true,
+    protocolo: registro.protocolo,
+    respondidoEm: registro.dataSubmissaoFormatada,
+    bitrixCardId: registro.bitrixCardId,
+    bitrixStageId: registro.bitrixStageId
+  });
+});
+
+// ============================================
+// ENDPOINTS DA EQUIPE (painel interno)
+// ============================================
+
+// Status da integração e estatísticas gerais
+app.get('/api/estatisticas', (req, res) => {
+  res.json({
+    sucesso: true,
+    dados: {
+      totalSolicitacoes,
+      totalLinks: links.size,
+      totalRespondidos: respostas.size,
+      totalPendentes: links.size - respostas.size,
+      integracao: statusIntegracao
+    }
+  });
+});
+
+// Sincroniza a base (recarrega do Google Sheets ou base local)
+app.all('/api/sincronizar', async (req, res) => {
+  try {
+    await carregarBase();
+    res.json({
+      sucesso: true,
+      mensagem: `Base sincronizada via ${statusIntegracao.fonte}!`,
+      totalSolicitacoes,
+      totalLinks: links.size,
+      integracao: statusIntegracao
+    });
+  } catch (err) {
+    res.status(500).json({ sucesso: false, mensagem: err.message });
+  }
+});
+
+app.get('/api/solicitacoes', (req, res) => {
+  const dados = [...links.values()].map((l) => {
+    const r = respostas.get(l.token);
+    return {
+      token: l.token,
+      link: montarUrl(l.token, req),
+      nome: l.nome,
+      cpf: formatarCpf(l.cpf),
+      telefone: l.telefone,
+      dataReferencia: l.dataReferencia,
+      cursos: l.cursos,
+      status: r ? 'EMITIR' : 'ENTRADA',
+      resposta: r || null
+    };
+  });
+  res.json({
+    sucesso: true,
+    total: dados.length,
+    integracao: statusIntegracao,
+    ipLocal,
+    dados
+  });
+});
+
+// Simulação do disparo WhatsApp (IA Zionic)
+app.post('/api/notificacoes/whatsapp', (req, res) => {
+  const link = links.get(req.body?.token);
+  if (!link) return res.status(404).json({ sucesso: false, mensagem: 'Link não encontrado.' });
+
+  const url = montarUrl(link.token, req);
+  console.log(`📱 [ZIONIC] ${link.nome} (${link.telefone}) → ${url}`);
+  res.json({ sucesso: true, mensagem: 'Notificação simulada com sucesso.', linkEnviado: url });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    ipLocal,
+    integracao: statusIntegracao,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// SPA fallback (produção) — rotas não-API servem o index do build
+app.get(/^(?!\/api).*/, (req, res) => {
+  const indexPath = path.join(__dirname, 'dist', 'index.html');
+  if (fs.existsSync(indexPath)) return res.sendFile(indexPath);
+  res.status(404).send('Build não encontrado. Rode "npm run build" ou use "npm start" para desenvolvimento.');
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n========================================================`);
+  console.log(`🚀 SERVIDOR ATIVO E ACESSÍVEL NA REDE LOCAL (LAN)!`);
+  console.log(`========================================================`);
+  console.log(`💻 Neste Computador (Host):`);
+  console.log(`   ➔ Painel da Equipe:  http://localhost:${FRONTEND_PORT}`);
+  console.log(`   ➔ API Backend:       http://localhost:${PORT}`);
+  console.log(`\n📱 Em Outro PC (Sala de Reunião / Celular):`);
+  console.log(`   ➔ Painel da Gestão:  http://${ipLocal}:${FRONTEND_PORT}`);
+  console.log(`   ➔ Link de Aluno:     http://${ipLocal}:${FRONTEND_PORT}/solicitacoes/<token>`);
+  console.log(`\n📊 Fonte de Dados:      ${statusIntegracao.fonte}`);
+  if (statusIntegracao.clientEmail) {
+    console.log(`🔐 Google Service:     ${statusIntegracao.clientEmail}`);
+  }
+  console.log(`========================================================\n`);
+});
