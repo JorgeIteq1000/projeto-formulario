@@ -1,6 +1,6 @@
 # 🎓 Automação de Emissão de Certificados
 
-Sistema integrado para emissão ágil de certificados acadêmicos (Extensão e Aperfeiçoamento), integrando formulário individual responsivo, controle via **Google Sheets**, CRM **Bitrix24** e disparos via WhatsApp (**IA Zionic**).
+Sistema integrado para emissão ágil de certificados acadêmicos (Extensão e Aperfeiçoamento), integrando formulário individual responsivo, controle via **Google Sheets**, CRM **Bitrix24** e disparos via WhatsApp (**IA Zionic**)..
 
 ---
 
