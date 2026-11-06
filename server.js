@@ -458,16 +458,21 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     console.error(`❌ Não foi possível salvar as respostas em ${RESPOSTAS_FILE}: ${err.message}`);
   }
 
-  // Atualização no Google Sheets em segundo plano (se configurado e fora do modo somente leitura)
+  // Atualização no Google Sheets (se configurado e fora do modo somente leitura)
+  // Aguarda a conclusão para garantir gravação em ambientes serverless (Vercel)
   if (SHEET_SOMENTE_LEITURA) {
-    console.log('ℹ️  Planilha em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): status EMITIR não foi gravado.');
+    console.log('ℹ️  Planilha em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): status EMITIR e protocolo não foram gravados.');
   } else {
-    registrarRespostaNoSheet({
-      spreadsheetId: GOOGLE_SHEET_ID,
-      token: link.token,
-      resposta: registro,
-      linkInfo: link
-    }).catch((err) => console.error('Erro ao registrar resposta no Google Sheets:', err.message));
+    try {
+      await registrarRespostaNoSheet({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        token: link.token,
+        resposta: registro,
+        linkInfo: link
+      });
+    } catch (err) {
+      console.error('Erro ao registrar resposta no Google Sheets:', err.message);
+    }
   }
 
   console.log(`✅ [BITRIX24/PLANILHA] ${link.nome} (${formatarCpf(link.cpf)}) → ENTRADA ➜ EMITIR | ${registro.protocolo}${registro.bitrixCardId ? ` | Bitrix SPA ID: ${registro.bitrixCardId} (${registro.bitrixStageId})` : ''}`);
