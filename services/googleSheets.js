@@ -25,6 +25,60 @@ function resolverCaminhoCredenciais() {
   return null;
 }
 
+// Obtém o objeto de credenciais da Service Account (de variável de ambiente ou arquivo local)
+export function obterCredenciaisGoogle() {
+  // 1. Variáveis dedicadas de credenciais (JSON direto ou Base64) - Ideal para Vercel
+  const candidatosEnv = [
+    process.env.GOOGLE_CREDENTIALS,
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON,
+    process.env.GOOGLE_CREDENTIALS_BASE64
+  ].filter(Boolean);
+
+  for (const raw of candidatosEnv) {
+    const limpo = raw.trim();
+    if (limpo.startsWith('{')) {
+      try {
+        return JSON.parse(limpo);
+      } catch (err) {
+        console.warn('⚠️  Falha ao parsear JSON das credenciais em variável de ambiente:', err.message);
+      }
+    }
+    try {
+      const decodificado = Buffer.from(limpo, 'base64').toString('utf-8');
+      if (decodificado.trim().startsWith('{')) {
+        return JSON.parse(decodificado);
+      }
+    } catch {
+      // Não era base64
+    }
+  }
+
+  // 2. Se o usuário colou o JSON diretamente em GOOGLE_APPLICATION_CREDENTIALS
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS.trim();
+    if (raw.startsWith('{')) {
+      try {
+        return JSON.parse(raw);
+      } catch (err) {
+        console.warn('⚠️  Falha ao parsear JSON em GOOGLE_APPLICATION_CREDENTIALS:', err.message);
+      }
+    }
+  }
+
+  // 3. Fallback: procurar arquivo no disco local (123.json ou credentials.json)
+  const caminhoCredenciais = resolverCaminhoCredenciais();
+  if (caminhoCredenciais && fs.existsSync(caminhoCredenciais)) {
+    try {
+      return JSON.parse(fs.readFileSync(caminhoCredenciais, 'utf-8'));
+    } catch (err) {
+      console.warn(`⚠️  Falha ao ler arquivo de credenciais ${caminhoCredenciais}:`, err.message);
+    }
+  }
+
+  return null;
+}
+
 let sheetsClient = null;
 let clientEmail = null;
 let credenciaisValidas = false;
@@ -33,18 +87,27 @@ let credenciaisValidas = false;
 export function inicializarGoogleAuth() {
   if (sheetsClient) return { sheets: sheetsClient, clientEmail, credenciaisValidas };
 
-  const caminhoCredenciais = resolverCaminhoCredenciais();
-  if (!caminhoCredenciais) {
-    console.warn('⚠️  Arquivo de credenciais do Google (123.json) não encontrado.');
+  const credConteudo = obterCredenciaisGoogle();
+  if (!credConteudo || !credConteudo.client_email) {
+    console.warn('⚠️  Credenciais do Google (123.json ou GOOGLE_CREDENTIALS) não encontradas.');
     return { sheets: null, clientEmail: null, credenciaisValidas: false };
   }
 
   try {
-    const credConteudo = JSON.parse(fs.readFileSync(caminhoCredenciais, 'utf-8'));
     clientEmail = credConteudo.client_email;
 
+    // Normaliza quebras de linha na private_key caso venham escapadas como '\\n'
+    let privateKey = credConteudo.private_key;
+    if (privateKey && typeof privateKey === 'string') {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
+
     const auth = new google.auth.GoogleAuth({
-      keyFile: caminhoCredenciais,
+      credentials: {
+        client_email: credConteudo.client_email,
+        private_key: privateKey,
+        project_id: credConteudo.project_id
+      },
       scopes: ['https://www.googleapis.com/auth/spreadsheets']
     });
 

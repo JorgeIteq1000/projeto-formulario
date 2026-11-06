@@ -93,7 +93,9 @@ const JANELA_HORAS = 24;
 // Arquivo onde as respostas ficam salvas para sobreviver a reinícios (contém dados pessoais; fora do git)
 const RESPOSTAS_FILE = process.env.RESPOSTAS_FILE
   ? path.resolve(process.env.RESPOSTAS_FILE)
-  : path.join(__dirname, 'data', 'respostas.json');
+  : (process.env.VERCEL
+      ? path.join(os.tmpdir(), 'respostas.json')
+      : path.join(__dirname, 'data', 'respostas.json'));
 
 const REDES_VALIDAS = ['particular', 'estadual', 'municipal'];
 
@@ -101,6 +103,18 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.static(path.join(__dirname, 'dist')));
+
+// Garante que a base foi carregada antes de atender qualquer rota /api (essencial no Vercel serverless)
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    try {
+      await garantirBaseCarregada();
+    } catch (err) {
+      console.warn('⚠️  Requisição /api recebida antes do término do carregamento da base:', err.message);
+    }
+  }
+  next();
+});
 
 // ============================================
 // HELPERS
@@ -224,8 +238,21 @@ async function carregarBase() {
   console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais. Dados pessoais: ${statusIntegracao.dadosAlunos.total} aluno(s) [${statusIntegracao.dadosAlunos.fonte}].`);
 }
 
-// Inicializa a carga assíncrona
-carregarBase();
+let baseCarregandoPromise = null;
+
+export function garantirBaseCarregada() {
+  if (!baseCarregandoPromise) {
+    baseCarregandoPromise = carregarBase().catch((err) => {
+      console.error('❌ Falha ao carregar base de solicitações:', err);
+      baseCarregandoPromise = null;
+      throw err;
+    });
+  }
+  return baseCarregandoPromise;
+}
+
+// Inicializa a carga assíncrona no startup
+garantirBaseCarregada().catch(() => {});
 
 // Monta o link para o aluno (suporta domínio de produção, IP local de rede ou host da requisição)
 function montarUrl(token, req = null) {
@@ -234,13 +261,13 @@ function montarUrl(token, req = null) {
     return `${PUBLIC_FORM_URL}/solicitacoes/${token}`;
   }
 
-  // Se a requisição veio de outro computador na rede pelo IP
+  // Se a requisição veio de outro computador na rede pelo IP ou Vercel
   if (req) {
     const host = req.get('x-forwarded-host') || req.get('host');
     if (host) {
-      const protocolo = req.protocol || 'http';
-      // Ajusta porta do backend para o frontend no modo dev se necessário
-      const hostFrontend = host.replace(`:${PORT}`, `:${FRONTEND_PORT}`);
+      const protocolo = req.get('x-forwarded-proto') || req.protocol || (process.env.VERCEL ? 'https' : 'http');
+      // Ajusta porta do backend para o frontend no modo dev se necessário (no Vercel não há portas no host)
+      const hostFrontend = host.includes(':') ? host.replace(`:${PORT}`, `:${FRONTEND_PORT}`) : host;
       return `${protocolo}://${hostFrontend}/solicitacoes/${token}`;
     }
   }
@@ -539,19 +566,28 @@ app.get(/^(?!\/api).*/, (req, res) => {
   res.status(404).send('Build não encontrado. Rode "npm run build" ou use "npm start" para desenvolvimento.');
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n========================================================`);
-  console.log(`🚀 SERVIDOR ATIVO E ACESSÍVEL NA REDE LOCAL (LAN)!`);
-  console.log(`========================================================`);
-  console.log(`💻 Neste Computador (Host):`);
-  console.log(`   ➔ Painel da Equipe:  http://localhost:${FRONTEND_PORT}`);
-  console.log(`   ➔ API Backend:       http://localhost:${PORT}`);
-  console.log(`\n📱 Em Outro PC (Sala de Reunião / Celular):`);
-  console.log(`   ➔ Painel da Gestão:  http://${ipLocal}:${FRONTEND_PORT}`);
-  console.log(`   ➔ Link de Aluno:     http://${ipLocal}:${FRONTEND_PORT}/solicitacoes/<token>`);
-  console.log(`\n📊 Fonte de Dados:      ${statusIntegracao.fonte}`);
-  if (statusIntegracao.clientEmail) {
-    console.log(`🔐 Google Service:     ${statusIntegracao.clientEmail}`);
-  }
-  console.log(`========================================================\n`);
-});
+const isDirectRun = !process.env.VERCEL && process.argv[1] && (
+  path.resolve(process.argv[1]) === path.resolve(__filename)
+);
+
+if (isDirectRun) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n========================================================`);
+    console.log(`🚀 SERVIDOR ATIVO E ACESSÍVEL NA REDE LOCAL (LAN)!`);
+    console.log(`========================================================`);
+    console.log(`💻 Neste Computador (Host):`);
+    console.log(`   ➔ Painel da Equipe:  http://localhost:${FRONTEND_PORT}`);
+    console.log(`   ➔ API Backend:       http://localhost:${PORT}`);
+    console.log(`\n📱 Em Outro PC (Sala de Reunião / Celular):`);
+    console.log(`   ➔ Painel da Gestão:  http://${ipLocal}:${FRONTEND_PORT}`);
+    console.log(`   ➔ Link de Aluno:     http://${ipLocal}:${FRONTEND_PORT}/solicitacoes/<token>`);
+    console.log(`\n📊 Fonte de Dados:      ${statusIntegracao.fonte}`);
+    if (statusIntegracao.clientEmail) {
+      console.log(`🔐 Google Service:     ${statusIntegracao.clientEmail}`);
+    }
+    console.log(`========================================================\n`);
+  });
+}
+
+export { app, carregarBase };
+export default app;
