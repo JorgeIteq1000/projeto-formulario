@@ -122,6 +122,9 @@ export function inicializarGoogleAuth() {
   }
 }
 
+// Coluna T (índice 19): onde fica o link individual de cada aluno
+const COLUNA_LINK_IDX = 19;
+
 let nomeAbaCache = null;
 
 // Descobre a aba da planilha (prioriza GID 267936837 ou "Extensões e Aperfeiçoamentos")
@@ -222,6 +225,8 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             naturalidade: idx.naturalidade !== -1 ? r[idx.naturalidade] || '' : '',
             cargaHoraria: idx.cargaHoraria !== -1 ? r[idx.cargaHoraria] || '' : '',
             protocolo: idx.protocolo !== -1 ? r[idx.protocolo] || '' : '',
+            // Coluna T ("Link"): link individual do aluno, gravado por gravarLinksNaPlanilha
+            link: String((idx.link !== -1 ? r[idx.link] : r[COLUNA_LINK_IDX]) || '').trim(),
             statusOriginal: idx.status !== -1 ? r[idx.status] : ''
           });
         }
@@ -379,6 +384,96 @@ export async function registrarRespostaNoSheet({
   } catch (err) {
     console.error('❌ Erro ao atualizar resposta no Google Sheets:', err.message);
     return { atualizado: false, erro: err.message };
+  }
+}
+
+/**
+ * Grava o link individual de cada aluno na coluna T ("Link") da aba de solicitações,
+ * em todas as linhas do aluno (por CPF). Só escreve na coluna do link:
+ * - célula vazia ou com um link do formulário (contém "/solicitacoes/") é atualizada se for diferente;
+ * - qualquer outro conteúdo é preservado (não sobrescreve texto de terceiros).
+ * @param {Object} params
+ * @param {string} params.spreadsheetId
+ * @param {Array<{cpf: string, url: string}>} params.itens um item por aluno
+ * @param {boolean} [params.dryRun] apenas calcula, sem gravar
+ */
+export async function gravarLinksNaPlanilha({ spreadsheetId, itens = [], dryRun = false, sheetsOverride = null }) {
+  const sheets = sheetsOverride || inicializarGoogleAuth().sheets;
+  if (!sheets || !spreadsheetId) {
+    return { sucesso: false, motivo: 'Planilha não configurada' };
+  }
+
+  try {
+    const nomeAba = await descobrirNomeAba(sheets, spreadsheetId);
+    const rowsRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${nomeAba}'!A:Z`
+    });
+    const rows = rowsRes.data.values || [];
+    const headers = rows[0] || [];
+
+    const colCpfIdx = headers.findIndex((h) => semAcento(h) === 'CPF');
+    if (colCpfIdx === -1) return { sucesso: false, motivo: 'Coluna CPF não encontrada' };
+
+    // Coluna do link: cabeçalho "Link"; se não existir, usa a coluna T
+    let colLinkIdx = headers.findIndex((h) => semAcento(h) === 'LINK');
+    const criarCabecalho = colLinkIdx === -1;
+    if (criarCabecalho) colLinkIdx = COLUNA_LINK_IDX;
+    const letra = idxParaColunaA1(colLinkIdx);
+
+    const urlPorCpf = new Map();
+    for (const it of itens) {
+      const cpf = String(it?.cpf || '').replace(/\D/g, '').padStart(11, '0');
+      if (cpf && it?.url) urlPorCpf.set(cpf, it.url);
+    }
+
+    const updates = [];
+    if (criarCabecalho) updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['Link']] });
+
+    let jaCorretos = 0;
+    let preservados = 0;
+    const cpfsAtualizados = new Set();
+    for (let i = 1; i < rows.length; i++) {
+      const digitos = String(rows[i][colCpfIdx] || '').replace(/\D/g, '');
+      if (!digitos) continue;
+      const url = urlPorCpf.get(digitos.padStart(11, '0'));
+      if (!url) continue;
+
+      const atual = String(rows[i][colLinkIdx] || '').trim();
+      if (atual === url) { jaCorretos++; continue; }
+      if (atual && !atual.includes('/solicitacoes/')) { preservados++; continue; }
+
+      updates.push({ range: `'${nomeAba}'!${letra}${i + 1}`, values: [[url]] });
+      cpfsAtualizados.add(digitos.padStart(11, '0'));
+    }
+
+    const linhasAtualizadas = updates.length - (criarCabecalho ? 1 : 0);
+    const resumo = {
+      sucesso: true,
+      dryRun,
+      aba: nomeAba,
+      coluna: letra,
+      alunos: urlPorCpf.size,
+      alunosAtualizados: cpfsAtualizados.size,
+      linhasAtualizadas,
+      jaCorretos,
+      preservados
+    };
+
+    if (!dryRun && updates.length) {
+      const TAMANHO_LOTE = 500;
+      for (let i = 0; i < updates.length; i += TAMANHO_LOTE) {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          resource: { valueInputOption: 'RAW', data: updates.slice(i, i + TAMANHO_LOTE) }
+        });
+      }
+      console.log(`✅ [GOOGLE SHEETS] ${linhasAtualizadas} link(s) gravado(s) na coluna ${letra} (${cpfsAtualizados.size} aluno(s)).`);
+    }
+    return resumo;
+  } catch (err) {
+    console.error('❌ Erro ao gravar links no Google Sheets:', err.message);
+    return { sucesso: false, erro: err.message };
   }
 }
 

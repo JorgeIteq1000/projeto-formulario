@@ -12,6 +12,7 @@ import {
   carregarSolicitacoes,
   registrarRespostaNoSheet,
   inicializarGoogleAuth,
+  gravarLinksNaPlanilha
 } from './services/googleSheets.js';
 import { criarCardAlunoSPA } from './services/bitrix24.js';
 import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
@@ -229,6 +230,8 @@ async function carregarBase() {
       dataNascimento: primeiroPreenchido('dataNascimento'),
       rg: primeiroPreenchido('rg'),
       naturalidade: primeiroPreenchido('naturalidade'),
+      // Link já gravado na coluna T da planilha (só vale se for deste mesmo token)
+      linkPlanilha: ((itens.find((i) => i.link && String(i.link).endsWith(`/${token}`)) || {}).link) || '',
       dataReferencia,
       cursos
     });
@@ -273,6 +276,21 @@ function montarUrl(token, req = null) {
 
   // Fallback para o IP da máquina na rede local
   return `http://${ipLocal}:${FRONTEND_PORT}/solicitacoes/${token}`;
+}
+
+// Grava na coluna T da planilha o link individual de cada aluno (domínio oficial em PUBLIC_FORM_URL)
+export async function sincronizarLinksNaPlanilha({ dryRun = false } = {}) {
+  if (!PUBLIC_FORM_URL || PUBLIC_FORM_URL.includes('localhost')) {
+    return { sucesso: false, motivo: 'PUBLIC_FORM_URL precisa apontar para o domínio oficial (não localhost).' };
+  }
+  if (!GOOGLE_SHEET_ID) return { sucesso: false, motivo: 'GOOGLE_SHEET_ID não configurado.' };
+  await garantirBaseCarregada();
+  const itens = [...links.values()].map((l) => ({ cpf: l.cpf, url: `${PUBLIC_FORM_URL}/solicitacoes/${l.token}` }));
+  return gravarLinksNaPlanilha({
+    spreadsheetId: GOOGLE_SHEET_ID,
+    itens,
+    dryRun: dryRun || SHEET_SOMENTE_LEITURA
+  });
 }
 
 // ============================================
@@ -548,7 +566,7 @@ app.post('/api/notificacoes/whatsapp', async (req, res) => {
   const link = links.get(req.body?.token);
   if (!link) return res.status(404).json({ sucesso: false, mensagem: 'Link não encontrado.' });
 
-  const url = montarUrl(link.token, req);
+  const url = link.linkPlanilha || montarUrl(link.token, req);
   const textoMensagem = montarMensagemCertificado({
     nome: link.nome,
     cursos: link.cursos,
