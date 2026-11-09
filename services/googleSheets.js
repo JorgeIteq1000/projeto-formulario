@@ -192,8 +192,8 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
           status: headers.findIndex(h => h.includes('STATUS')),
           telefone: headers.findIndex(h => h.includes('TELEFONE') || h.includes('WHATSAPP') || h.includes('CELULAR')),
           dataNascimento: headers.findIndex(h => h.includes('NASCIMENTO')),
-          rg: headers.findIndex(h => h === 'RG' || h.startsWith('RG ')),
-          naturalidade: headers.findIndex(h => h.includes('NATURALIDADE')),
+          rg: headers.findIndex(h => h === 'RG' || h.startsWith('RG ') || h.includes('RG')),
+          naturalidade: headers.findIndex(h => h.includes('NATURALIDADE') || h.includes('NACIONALIDADE')),
           cargaHoraria: headers.findIndex(h => h.includes('CARGA')),
           protocolo: headers.findIndex(h => h.includes('PROTOCOLO')),
           token: headers.findIndex(h => h === 'TOKEN'),
@@ -210,13 +210,13 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             linhaPlanilha: i + 1, // 1-indexed para edição posterior
             solicitacao: idx.solicitacao !== -1 ? r[idx.solicitacao] : '',
             cpf: (cpfRaw || '').toString().replace(/\D/g, ''),
-            nome: idx.nome !== -1 ? r[idx.nome] : '',
+            nome: (idx.nome !== -1 ? r[idx.nome] : r[2]) || '',
             tipoCertificado: idx.tipoCertificado !== -1 ? r[idx.tipoCertificado] : 'Digital',
             tipoCurso: idx.tipoCurso !== -1 ? r[idx.tipoCurso] : 'Extensão',
             curso: idx.curso !== -1 ? r[idx.curso] : '',
             certificadora: idx.certificadora !== -1 ? r[idx.certificadora] : '',
             contrato: idx.contrato !== -1 ? r[idx.contrato] : `lin-${i + 1}`,
-            telefone: idx.telefone !== -1 ? (r[idx.telefone] || '').toString().replace(/\D/g, '') : '',
+            telefone: (idx.telefone !== -1 ? r[idx.telefone] : r[11]) ? (idx.telefone !== -1 ? r[idx.telefone] : r[11]).toString().replace(/\D/g, '') : '',
             dataNascimento: idx.dataNascimento !== -1 ? r[idx.dataNascimento] || '' : '',
             rg: idx.rg !== -1 ? r[idx.rg] || '' : '',
             naturalidade: idx.naturalidade !== -1 ? r[idx.naturalidade] || '' : '',
@@ -267,6 +267,8 @@ export function idxParaColunaA1(colIdx) {
   }
   return col;
 }
+
+const semAcento = (txt) => String(txt || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
 
 /**
  * Registra a resposta do aluno no Google Sheets (se ativo)
@@ -386,80 +388,4 @@ export async function registrarRespostaNoSheet({
 // Os dados exibidos no certificado (nascimento, RG, naturalidade) ficam numa aba própria, para não
 // mexer na aba de solicitações preenchida pela automação. Colunas: CPF, DATA DE NASCIMENTO, RG, NATURALIDADE.
 
-const cpfDigitos = (cpf) => String(cpf || '').replace(/\D/g, '').padStart(11, '0');
-const semAcento = (txt) => String(txt || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toUpperCase();
 
-/**
- * Converte as linhas da aba (primeira linha = cabeçalhos) em um Map cpf (11 dígitos) -> dados do aluno.
- * Cabeçalhos são reconhecidos pelo texto, em qualquer ordem. Sem a coluna CPF, retorna Map vazio.
- */
-export function montarDadosAlunos(linhas = []) {
-  const mapa = new Map();
-  if (!linhas.length) return mapa;
-
-  const cab = linhas[0].map(semAcento);
-  const iCpf = cab.findIndex((h) => h === 'CPF');
-  if (iCpf === -1) return mapa;
-  const iNasc = cab.findIndex((h) => h.includes('NASCIMENTO'));
-  const iRg = cab.findIndex((h) => h === 'RG' || h.startsWith('RG '));
-  const iNat = cab.findIndex((h) => h.includes('NATURALIDADE'));
-  const valor = (linha, i) => (i === -1 ? '' : String(linha[i] ?? '').trim());
-
-  for (const linha of linhas.slice(1)) {
-    if (!String(linha[iCpf] ?? '').replace(/\D/g, '')) continue;
-    mapa.set(cpfDigitos(linha[iCpf]), {
-      dataNascimento: valor(linha, iNasc),
-      rg: valor(linha, iRg),
-      naturalidade: valor(linha, iNat)
-    });
-  }
-  return mapa;
-}
-
-/** Aceita um arquivo local com array [{ cpf, dataNascimento, rg, naturalidade }]. */
-export function montarDadosAlunosDeLista(lista = []) {
-  const mapa = new Map();
-  for (const a of Array.isArray(lista) ? lista : []) {
-    if (!String(a?.cpf ?? '').replace(/\D/g, '')) continue;
-    mapa.set(cpfDigitos(a.cpf), {
-      dataNascimento: String(a.dataNascimento ?? '').trim(),
-      rg: String(a.rg ?? '').trim(),
-      naturalidade: String(a.naturalidade ?? '').trim()
-    });
-  }
-  return mapa;
-}
-
-/**
- * Lê os dados pessoais dos alunos: primeiro da aba DADOS_ALUNOS da planilha (nome configurável em
- * GOOGLE_SHEET_TAB_DADOS); se ela não existir ou estiver vazia, tenta o arquivo local
- * (DADOS_ALUNOS_FILE ou src/data/dadosAlunos.json). Nunca lança erro: sem dados, o formulário mostra "Não informado".
- * @returns {Promise<{ dados: Map<string, {dataNascimento: string, rg: string, naturalidade: string}>, fonte: string }>}
- */
-export async function carregarDadosAlunos({ spreadsheetId } = {}) {
-  const { sheets } = inicializarGoogleAuth();
-  const aba = process.env.GOOGLE_SHEET_TAB_DADOS || 'DADOS_ALUNOS';
-
-  if (sheets && spreadsheetId) {
-    try {
-      const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${aba}'!A1:Z` });
-      const dados = montarDadosAlunos(res.data.values || []);
-      if (dados.size) return { dados, fonte: `google_sheets:${aba}` };
-    } catch (err) {
-      console.log(`ℹ️  Aba "${aba}" não lida (${err.message.split('\n')[0]}). Dados pessoais ficarão como "Não informado" até a aba existir.`);
-    }
-  }
-
-  const arquivo = process.env.DADOS_ALUNOS_FILE
-    ? path.resolve(process.env.DADOS_ALUNOS_FILE)
-    : path.join(__dirname, '..', 'src', 'data', 'dadosAlunos.json');
-  if (fs.existsSync(arquivo)) {
-    try {
-      const dados = montarDadosAlunosDeLista(JSON.parse(fs.readFileSync(arquivo, 'utf-8')));
-      if (dados.size) return { dados, fonte: 'arquivo_local' };
-    } catch (err) {
-      console.warn(`⚠️  Arquivo de dados pessoais inválido (${arquivo}): ${err.message}`);
-    }
-  }
-  return { dados: new Map(), fonte: 'nenhuma' };
-}

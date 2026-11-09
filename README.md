@@ -50,23 +50,16 @@ GOOGLE_SHEET_ID=SEU_ID_DA_PLANILHA_AQUI
 *(O ID fica na URL da planilha: `https://docs.google.com/spreadsheets/d/SEU_ID_AQUI/edit`)*
 
 ### 3. Testes locais com a planilha real (somente leitura):
-Para ver o formulário com os dados reais da planilha **sem gravar nada nela**, defina `GOOGLE_SHEET_SOMENTE_LEITURA=true` antes de iniciar. A planilha é lida normalmente (solicitações e aba `DADOS_ALUNOS`), mas o status `EMITIR` não é escrito nela ao enviar um formulário. Para também não criar card no Bitrix24, aponte `BITRIX24_WEBHOOK_URL` para um endereço inválido (ex.: `http://localhost:9`) e use um `RESPOSTAS_FILE` de teste.
+Para ver o formulário com os dados reais da planilha **sem gravar nada nela**, defina `GOOGLE_SHEET_SOMENTE_LEITURA=true` antes de iniciar. A planilha é lida normalmente (aba `Extensões e Aperfeiçoamentos`), mas o status `EMITIR` não é escrito nela ao enviar um formulário. Para também não criar card no Bitrix24, aponte `BITRIX24_WEBHOOK_URL` para um endereço inválido (ex.: `http://localhost:9`) e use um `RESPOSTAS_FILE` de teste.
 
 ### 4. Modo de Contingência (Fallback Seguro):
 Se o `GOOGLE_SHEET_ID` estiver vazio ou a planilha não estiver acessível, o sistema utiliza automaticamente a base local (`src/data/solicitacoesRaw.json`), garantindo que **a demonstração nunca falhe ou trave**.
 
 ---
 
-## 🗂️ Aba DADOS_ALUNOS (dados pessoais)
+## 🗂️ Dados Pessoais dos Alunos
 
-Os dados pessoais exibidos no formulário ficam numa aba própria, para não alterar a aba "Extensões e Aperfeiçoamentos" (preenchida por automação). Para ativar:
-
-1. Na planilha configurada em `GOOGLE_SHEET_ID`, crie uma aba chamada **`DADOS_ALUNOS`** (o nome pode ser alterado com `GOOGLE_SHEET_TAB_DADOS`).
-2. Na linha 1, coloque os cabeçalhos: `CPF`, `DATA DE NASCIMENTO`, `RG`, `NATURALIDADE` (a ordem das colunas não importa).
-3. Preencha uma linha por aluno. O CPF pode ter pontos e traço; zeros à esquerda perdidos pela planilha são completados automaticamente.
-4. Use o botão de sincronizar do painel (ou reinicie o servidor) para recarregar.
-
-A conta de serviço já configurada precisa de permissão de leitura na planilha (hoje tem Editor). Sem a aba, o sistema segue funcionando e mostra "Não informado". Para testes locais, sem planilha, é possível usar um arquivo `src/data/dadosAlunos.json` (ou o caminho em `DADOS_ALUNOS_FILE`) com uma lista `[{ "cpf": "...", "dataNascimento": "...", "rg": "...", "naturalidade": "..." }]`; esse arquivo contém dados pessoais e está no `.gitignore`.
+Os dados pessoais exibidos no formulário (Data de Nascimento, RG e Naturalidade/Nacionalidade) são lidos diretamente das colunas da aba principal **"Extensões e Aperfeiçoamentos"** (cabeçalhos contendo `NASCIMENTO`, `RG` e `NATURALIDADE` ou `NACIONALIDADE`). Não há necessidade de criar uma aba separada na planilha.
 
 ---
 
@@ -102,7 +95,7 @@ Quando for publicar em `certificadosies.com.br`:
 
 0. **Dados pessoais e dos cursos (somente leitura):**
    - Exibe Nome, CPF, Data de Nascimento, RG e Naturalidade, e o tipo de cada curso com a carga horária (ex: `Extensão • 45h`).
-   - **Data de Nascimento, RG e Naturalidade** vêm da aba **`DADOS_ALUNOS`** da planilha, ligada ao aluno pelo CPF (ver "Aba DADOS_ALUNOS" abaixo). Se a aba aparecer como colunas na aba de solicitações (cabeçalhos com `NASCIMENTO`, `RG` e `NATURALIDADE`), essas colunas têm prioridade. Sem nenhum dos dois, o formulário mostra "Não informado".
+   - **Data de Nascimento, RG e Naturalidade/Nacionalidade** vêm diretamente das colunas correspondentes na aba principal **"Extensões e Aperfeiçoamentos"**. Sem essas colunas ou vazias, o formulário mostra "Não informado".
    - A **carga horária** vem da coluna `CARGA` da planilha, se existir, ou do catálogo do Lyra (ver "Cargas Horárias dos Cursos"). Sem correspondência, o tipo do curso aparece sem a carga.
    - Logo abaixo dos dados pessoais fica o aviso institucional sobre atualização cadastral na aba "Meus Dados" e o prazo de **96hr**.
 
@@ -149,7 +142,7 @@ Levantamento das cargas horárias dos cursos de Extensão, Aperfeiçoamento, Pó
 ## 📂 Arquitetura do Projeto
 
 * `server.js`: Servidor Express com APIs de links, agrupamento por janela de 24h via HMAC determinístico, sincronização e rotas SPA.
-* `services/googleSheets.js` (dados pessoais): `carregarDadosAlunos` lê a aba `DADOS_ALUNOS` por CPF, com fallback para arquivo local.
+* `services/googleSheets.js`: lê as solicitações e dados pessoais (RG, nascimento, naturalidade) diretamente da aba principal "Extensões e Aperfeiçoamentos".
 * `services/escopo.js`: Define o escopo do formulário. Solicitações de tipos diferentes de Extensão e Aperfeiçoamento (inclui "Reingresso" e "Projeto de Extensão") são ignoradas ao carregar a base.
 * `services/cargaHoraria.js`: Descobre a carga horária do curso pelo tipo + nome, usando o catálogo do Lyra em `src/data/cargasHorarias.json` (gerado por `node scripts/gerarCargasHorarias.js` a partir de `docs/cargas-horarias.csv`). A carga da planilha tem prioridade; se não houver correspondência única, fica em branco (o sistema não adivinha).
 * `services/respostasStore.js`: Persistência das respostas dos alunos em `data/respostas.json` (gravação atômica). As respostas sobrevivem a reinícios do servidor e impedem novo envio do mesmo formulário. O arquivo contém dados pessoais e está no `.gitignore`; o caminho pode ser alterado com a variável `RESPOSTAS_FILE`.

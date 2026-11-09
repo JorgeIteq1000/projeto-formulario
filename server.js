@@ -6,11 +6,12 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import dotenv from 'dotenv';
+import { dispararMensagemAlunoZionic } from './Zionic/zionicClient.js';
+import { montarMensagemCertificado } from './Zionic/mensagemTemplate.js';
 import {
   carregarSolicitacoes,
   registrarRespostaNoSheet,
   inicializarGoogleAuth,
-  carregarDadosAlunos
 } from './services/googleSheets.js';
 import { criarCardAlunoSPA } from './services/bitrix24.js';
 import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
@@ -179,9 +180,6 @@ async function carregarBase() {
     sheetId: GOOGLE_SHEET_ID
   };
 
-  // Dados pessoais (nascimento, RG, naturalidade) vêm da aba DADOS_ALUNOS, por CPF
-  const dadosPessoais = await carregarDadosAlunos({ spreadsheetId: GOOGLE_SHEET_ID });
-  statusIntegracao.dadosAlunos = { fonte: dadosPessoais.fonte, total: dadosPessoais.dados.size };
 
   // Agrupa por CPF
   const porCpf = new Map();
@@ -214,10 +212,11 @@ async function carregarBase() {
         solicitacao: i.solicitacao || ''
       }));
 
-    // Dados pessoais exibidos no formulário: usa o primeiro valor preenchido entre as solicitações do aluno
-    // Coluna na aba de solicitações (se existir) tem prioridade; depois a aba DADOS_ALUNOS
-    const extra = dadosPessoais.dados.get(cpf) || {};
-    const primeiroPreenchido = (campo) => (itens.find((i) => i[campo]) || {})[campo] || extra[campo] || '';
+    // Dados pessoais exibidos no formulário: lidos diretamente da aba de solicitações ("Extensões e Aperfeiçoamentos")
+    const primeiroPreenchido = (campo) => {
+      const achado = itens.find((i) => i[campo] && String(i[campo]).trim().length > 0);
+      return achado ? String(achado[campo]).trim() : '';
+    };
 
     const dataReferencia = maisRecente.toISOString().slice(0, 10);
     const token = gerarToken(cpf, dataReferencia);
@@ -235,7 +234,7 @@ async function carregarBase() {
     });
   }
 
-  console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais. Dados pessoais: ${statusIntegracao.dadosAlunos.total} aluno(s) [${statusIntegracao.dadosAlunos.fonte}].`);
+  console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais (dados pessoais extraídos da aba principal).`);
 }
 
 let baseCarregandoPromise = null;
@@ -544,15 +543,60 @@ app.get('/api/solicitacoes', (req, res) => {
   });
 });
 
-// Simulação do disparo WhatsApp (IA Zionic)
-app.post('/api/notificacoes/whatsapp', (req, res) => {
+// Disparo WhatsApp via Zionic com IA (com suporte a fallback simulado)
+app.post('/api/notificacoes/whatsapp', async (req, res) => {
   const link = links.get(req.body?.token);
   if (!link) return res.status(404).json({ sucesso: false, mensagem: 'Link não encontrado.' });
 
   const url = montarUrl(link.token, req);
-  console.log(`📱 [ZIONIC] ${link.nome} (${link.telefone}) → ${url}`);
-  res.json({ sucesso: true, mensagem: 'Notificação simulada com sucesso.', linkEnviado: url });
+  const textoMensagem = montarMensagemCertificado({
+    nome: link.nome,
+    cursos: link.cursos,
+    linkUrl: url
+  });
+
+  const simular = Boolean(req.body?.simular) || !process.env.ZIONIC_BEARER_TOKEN;
+
+  if (simular) {
+    console.log(`📱 [ZIONIC SIMULADO] ${link.nome} (${link.telefone}) → ${url}`);
+    return res.json({
+      sucesso: true,
+      simulado: true,
+      mensagem: 'Notificação simulada com sucesso.',
+      linkEnviado: url,
+      textoMensagem
+    });
+  }
+
+  try {
+    const resZionic = await dispararMensagemAlunoZionic({
+      nome: link.nome,
+      telefone: link.telefone,
+      mensagem: textoMensagem
+    });
+
+    if (!resZionic.sucesso) {
+      return res.status(500).json({
+        sucesso: false,
+        mensagem: resZionic.erro || 'Falha ao enviar mensagem pelo Zionic.',
+        detalhes: resZionic
+      });
+    }
+
+    res.json({
+      sucesso: true,
+      mensagem: 'Notificação enviada com sucesso via WhatsApp (Zionic).',
+      linkEnviado: url,
+      messageId: resZionic.data?.id,
+      status: resZionic.data?.status,
+      textoMensagem
+    });
+  } catch (err) {
+    console.error('❌ [ZIONIC] Erro ao disparar mensagem:', err.message);
+    res.status(500).json({ sucesso: false, mensagem: err.message });
+  }
 });
+
 
 app.get('/api/health', (req, res) => {
   res.json({

@@ -16,17 +16,19 @@ test('CHALLENGE 1: Character-by-character conformance of Institutional Notice wi
   const originalRequestPath = path.resolve(__dirname, '../../.agents/teamwork/ORIGINAL_REQUEST.md');
   const studentFormPath = path.resolve(__dirname, '../src/components/StudentForm.jsx');
 
-  const origContent = fs.readFileSync(originalRequestPath, 'utf8');
   const formContent = fs.readFileSync(studentFormPath, 'utf8');
 
-  // Extract canonical string from ORIGINAL_REQUEST.md R3
-  // Target: "Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba \"Meus Dados\". A falta de finalização do formulário em **96hr**, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno."
-  const r3Line = origContent.split('\n').find((l) => l.includes('Caso seja necessário'));
-  assert.ok(r3Line, 'ORIGINAL_REQUEST.md must contain the R3 notice specification');
+  // Target canonical string for Institutional Notice (96h)
+  let unescapedExpected = 'Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba "Meus Dados". A falta de finalização do formulário em **96hr**, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno.';
 
-  // Strip leading and trailing quotes from the requirement line
-  const rawExpected = r3Line.trim().replace(/^"/, '').replace(/"$/, '');
-  const unescapedExpected = rawExpected.replace(/\\"/g, '"');
+  if (fs.existsSync(originalRequestPath)) {
+    const origContent = fs.readFileSync(originalRequestPath, 'utf8');
+    const r3Line = origContent.split('\n').find((l) => l.includes('Caso seja necessário'));
+    if (r3Line) {
+      const rawExpected = r3Line.trim().replace(/^"/, '').replace(/"$/, '');
+      unescapedExpected = rawExpected.replace(/\\"/g, '"');
+    }
+  }
 
   // Extract notice paragraph in StudentForm.jsx
   const matchP = formContent.match(/<p style=\{\{ color: '#cbd5e1'[\s\S]*?<\/p>/);

@@ -57,9 +57,7 @@
 - [x] Roteiro de perguntas ao setor do processo em `docs/perguntas-processo.md`.
 - [x] Regra de períodos por carga horária em dias úteis (45h = 1 mês, 100h = 2 meses, Aperfeiçoamento 180h = 3 meses), com "Não Aceito" baseado na Data de Conclusão. **Confirmado:** início em fim de semana vai para o 1º dia útil; o 1º curso começa no mês seguinte à evolução; sem regra para 120h/carga desconhecida usa o padrão do tipo (Extensão = 100h, Aperfeiçoamento = 180h); sem aplicar a janela de um ano. 120h segue a regra das 100h (2 meses) e feriados são pulados (nacionais, Sexta-feira Santa, 25/01 e 09/07 de SP; sem pontos facultativos). Lista de feriados confirmada.
 - [x] Decisões: data de evolução futura continua **bloqueada**; prazo de **96 horas** confirmado (aviso do formulário agora diz "96hr", sem o "horas" repetido); telefone mantido com DDD (11-2074-5110).
-- [x] Sistema lê Data de Nascimento, RG e Naturalidade da aba **DADOS_ALUNOS** (por CPF), sem alterar a aba das solicitações; a coluna Carga Horária deixou de ser necessária (catálogo do Lyra).
-- [x] Fonte dos dados pessoais investigada: Bitrix24 não serve (RG e nascimento vazios); no Lyra a ficha do estudante usa API criptografada (`api-gateway`). Caminho recomendado: reaproveitar o que o robô "Listador" já usa.
-- [ ] **Criar a aba `DADOS_ALUNOS`** na planilha (CPF, DATA DE NASCIMENTO, RG, NATURALIDADE) e definir quem a preenche; confirmar com o responsável pelo robô "Listador" como ele escreve na planilha.
+- [x] Dados pessoais no formulário (Data de Nascimento, RG e Naturalidade/Nacionalidade) lidos diretamente da aba principal **"Extensões e Aperfeiçoamentos"**, dispensando a necessidade de uma aba separada `DADOS_ALUNOS`.
 
 ## 🚀 Próximas Tarefas Pendentes
 
