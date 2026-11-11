@@ -13,7 +13,7 @@ async function main() {
   const msg1 = montarMensagemCertificado({
     nome: 'Maria Silva',
     cursos: ['PRÁTICAS PEDAGÓGICAS NA EDUCAÇÃO INFANTIL'],
-    linkUrl: 'https://solicitacao.certificadoies.com.br/solicitacoes/token-exemplo-1'
+    linkUrl: 'https://certificadoies.com.br/solicitacoes/token-exemplo-1'
   });
   console.log('--- Texto Gerado (1 curso) ---');
   console.log(msg1);
@@ -30,7 +30,7 @@ async function main() {
       { curso: 'GESTÃO ESCOLAR E COORDENAÇÃO PEDAGÓGICA' },
       { curso: 'EDUCAÇÃO ESPECIAL E INCLUSIVA' }
     ],
-    linkUrl: 'https://solicitacao.certificadoies.com.br/solicitacoes/token-exemplo-3'
+    linkUrl: 'https://certificadoies.com.br/solicitacoes/token-exemplo-3'
   });
   console.log('--- Texto Gerado (3 cursos) ---');
   console.log(msg3);
@@ -44,7 +44,7 @@ async function main() {
   const msg10 = montarMensagemCertificado({
     nome: 'Fernanda Lima dos Santos',
     cursos: cursos10,
-    linkUrl: 'https://solicitacao.certificadoies.com.br/solicitacoes/token-exemplo-10'
+    linkUrl: 'https://certificadoies.com.br/solicitacoes/token-exemplo-10'
   });
   console.log('--- Texto Gerado (10 cursos) ---');
   console.log(msg10);
@@ -61,7 +61,7 @@ async function main() {
     'GESTÃO ESTRATÉGICA EM EDUCAÇÃO',
     'METODOLOGIAS ATIVAS E INOVAÇÃO DOCENTE'
   ];
-  const linkReal = 'https://solicitacao.certificadoies.com.br/solicitacoes/tok-jorge-valida-2026';
+  const linkReal = 'https://certificadoies.com.br/solicitacoes/tok-jorge-valida-2026';
 
   const textoReal = montarMensagemCertificado({
     nome: nomeAluno,

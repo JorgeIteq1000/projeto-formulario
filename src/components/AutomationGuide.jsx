@@ -32,10 +32,10 @@ export default function AutomationGuide() {
       titulo: 'Notificação Ativa (Zionic IA)',
       icone: Smartphone,
       badge: 'WhatsApp • Custo Zero',
-      descricao: 'Um disparo automático é feito para o WhatsApp do aluno avisando sobre a solicitação e enviando um link único e seguro (solicitacao.certificadoies.com.br/solicitacoes/TOKEN) agrupando os cursos das últimas 24h.',
+      descricao: 'Um disparo automático é feito para o WhatsApp do aluno avisando sobre a solicitação e enviando um link único e seguro (certificadoies.com.br/solicitacoes/TOKEN) agrupando os cursos das últimas 24h.',
       detalhes: [
         'Disparo ativo sem fricção direto no celular do aluno',
-        'Link personalizado e seguro (ex: solicitacao.certificadoies.com.br/solicitacoes/...) com dados pré-autenticados',
+        'Link personalizado e seguro (ex: certificadoies.com.br/solicitacoes/...) com dados pré-autenticados',
         'Substitui 100% a dependência de e-mails lentos e manuais'
       ]
     },
