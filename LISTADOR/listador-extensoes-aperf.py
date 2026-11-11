@@ -123,12 +123,13 @@ def setup_google_sheets(worksheet_name_param):
             sheet = spreadsheet.worksheet(worksheet_name_param)
         except gspread.exceptions.WorksheetNotFound:
             log(f"⚠️ Aba '{worksheet_name_param}' não encontrada. Criando automaticamente com cabeçalhos padrão...")
-            sheet = spreadsheet.add_worksheet(title=worksheet_name_param, rows=1000, cols=20)
+            sheet = spreadsheet.add_worksheet(title=worksheet_name_param, rows=1000, cols=21)
             cabecalhos = [
                 'SOLICITAÇÃO', 'CPF', 'NOME', 'TIPO DE CERTIFICADO', 'TIPO DE CURSO',
                 'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO EVENTO', 'ID DO EVENTO',
                 'DATA CRIAÇÃO EVENTO', 'TELEFONE', 'DATA INÍCIO (ISO)', 'CRIAÇÃO MATRÍCULA (ISO)',
-                'USER ID', 'RG', 'Nacionalidade', 'Data de Nascimento'
+                'USER ID', 'RG', 'Nacionalidade', 'Data de Nascimento', 'Protocolo', 'Link',
+                'Inserido na Planilha em'
             ]
             sheet.append_row(cabecalhos, value_input_option='USER_ENTERED')
         return sheet
@@ -272,10 +273,20 @@ def executar_rotina_automatizada(session_id=None):
                 'SOLICITAÇÃO', 'CPF', 'NOME', 'TIPO DE CERTIFICADO', 'TIPO DE CURSO',
                 'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO EVENTO', 'ID DO EVENTO',
                 'DATA CRIAÇÃO EVENTO', 'TELEFONE', 'DATA INÍCIO (ISO)', 'CRIAÇÃO MATRÍCULA (ISO)',
-                'USER ID', 'RG', 'Nacionalidade', 'Data de Nascimento'
+                'USER ID', 'RG', 'Nacionalidade', 'Data de Nascimento', 'Protocolo', 'Link',
+                'Inserido na Planilha em'
             ]
             sheet.append_row(cabecalhos_planilha, value_input_option='USER_ENTERED')
             log("ℹ️ Cabeçalhos inseridos na aba vazia.")
+        else:
+            norm_headers = [normalizar_texto(h) for h in cabecalhos_planilha]
+            if not any("INSERID" in h for h in norm_headers):
+                log("➕ Cabeçalho 'Inserido na Planilha em' ausente. Adicionando na Coluna U...")
+                try:
+                    sheet.update_cell(1, len(cabecalhos_planilha) + 1, 'Inserido na Planilha em')
+                    cabecalhos_planilha.append('Inserido na Planilha em')
+                except Exception as e:
+                    log(f"⚠️ Não foi possível adicionar cabeçalho na Coluna U: {e}")
 
         log(f"📋 Colunas detectadas na planilha: {', '.join(cabecalhos_planilha)}")
 
@@ -384,8 +395,15 @@ def executar_rotina_automatizada(session_id=None):
                 except Exception:
                     telefone = "N/A"
             
+            data_insercao_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             # Mapa semântico de todos os campos possíveis
             mapa_campos = {
+                "INSERIDO NA PLANILHA EM": data_insercao_atual,
+                "INSERIDO NA PLANILHA": data_insercao_atual,
+                "DATA INSERCAO": data_insercao_atual,
+                "DATA DE INSERCAO": data_insercao_atual,
+                "DATA INSERCAO NA PLANILHA": data_insercao_atual,
+                "DATA DE INSERCAO NA PLANILHA": data_insercao_atual,
                 "SOLICITACAO": dt_solicita,
                 "CPF": cpf,
                 "NOME": nome,
@@ -422,6 +440,8 @@ def executar_rotina_automatizada(session_id=None):
             for col_header in cabecalhos_planilha:
                 col_norm = normalizar_texto(col_header)
                 val = mapa_campos.get(col_norm, "")
+                if not val and ("INSERID" in col_norm or "DATA INSER" in col_norm):
+                    val = data_insercao_atual
                 linha_ordenada.append(val)
             
             linhas_planilha.append(linha_ordenada)

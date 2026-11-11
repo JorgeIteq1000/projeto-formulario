@@ -566,7 +566,25 @@ app.post('/api/notificacoes/whatsapp', async (req, res) => {
   const link = links.get(req.body?.token);
   if (!link) return res.status(404).json({ sucesso: false, mensagem: 'Link não encontrado.' });
 
-  const url = link.linkPlanilha || montarUrl(link.token, req);
+  let url = link.linkPlanilha;
+  // Se a coluna T ainda não estiver preenchida para esse aluno, grava na planilha antes do disparo
+  if (!url) {
+    url = montarUrl(link.token, req);
+    if (GOOGLE_SHEET_ID && !SHEET_SOMENTE_LEITURA) {
+      try {
+        const gravacao = await gravarLinksNaPlanilha({
+          spreadsheetId: GOOGLE_SHEET_ID,
+          itens: [{ cpf: link.cpf, url }]
+        });
+        if (gravacao.sucesso) {
+          link.linkPlanilha = url;
+          console.log(`✍️ [COLUNA T] Link gravado automaticamente na planilha para ${link.nome} (CPF ${link.cpf}) antes do disparo.`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ [COLUNA T] Falha ao gravar link na planilha antes do disparo: ${err.message}`);
+      }
+    }
+  }
   const textoMensagem = montarMensagemCertificado({
     nome: link.nome,
     cursos: link.cursos,
@@ -633,9 +651,7 @@ app.get(/^(?!\/api).*/, (req, res) => {
   res.status(404).send('Build não encontrado. Rode "npm run build" ou use "npm start" para desenvolvimento.');
 });
 
-const isDirectRun = !process.env.VERCEL && process.argv[1] && (
-  path.resolve(process.argv[1]) === path.resolve(__filename)
-);
+const isDirectRun = !process.env.VERCEL;
 
 if (isDirectRun) {
   app.listen(PORT, '0.0.0.0', () => {

@@ -62,14 +62,18 @@
 ## 🚀 Próximas Tarefas Pendentes
 
 ### 1. Conexão do Disparo Ativo via WhatsApp com IA (Zionic)
-- [ ] **Mapeamento e Leitura da Base:**
-  - Consultar dados da planilha oficial no Google Sheets (Telefone, Nome, CPF, Contratos e Cursos solicitados).
-  - Obter/gerar o link individual seguro de 24h para cada aluno.
-- [ ] **Integração com API / Webhook da IA Zionic:**
-  - Montar payload com número de telefone formatado com DDI/DDD e mensagem personalizada.
-  - Enviar link individual do formulário (`http://.../solicitacoes/:token` ou domínio oficial).
-- [ ] **Garantias e Registro:**
-  - Salvar status do disparo (Enviado / Erro / Data e Hora) para conferência e evitar mensagens duplicadas.
+- [x] **Mapeamento e Leitura da Base:**
+  - Nome (coluna C), telefone (coluna L) e todas as solicitações do aluno agrupadas por CPF.
+  - Link individual seguro por aluno, gravado na **coluna T** da planilha (`https://newsolicitacoes.vercel.app/solicitacoes/:token`).
+- [x] **Integração com API da Zionic** (pasta `Zionic/`):
+  - Contato criado ou reaproveitado (HTTP 409 tratado), conversa localizada e mensagem enviada. Testado com envio real ao Jorge.
+  - Mensagem encapsula 1 ou N cursos e usa o link lido da coluna T.
+  - `node Zionic/sincronizarLinks.js --gravar` grava os links na coluna T (sem `--gravar` é só simulação).
+- [x] **Garantias e Registro:**
+  - Salvar status do disparo (Enviado / Erro / Data e Hora) em `data/disparos_whatsapp.json` para conferência e evitar mensagens duplicadas.
+  - Gravação automática da coluna T implementada (Opção 1): o robô verifica a coluna T antes de disparar; se estiver em branco, gera o link individual seguro e grava na planilha antes do envio via WhatsApp.
+  - Script de disparo em lote implementado em `Zionic/dispararLote.js` com suporte a simulação (`node Zionic/dispararLote.js`) e disparo real (`--enviar`).
+  - Autenticação 100% autônoma (Auto-Login e Auto-Refresh): o cliente Zionic autentica automaticamente via `POST /api/auth/signin` com e-mail e senha, renova silenciosamente com `refresh-token` e faz cache seguro em `data/zionic_auth.json`. Zero intervenção manual de tokens.
 
 ---
 

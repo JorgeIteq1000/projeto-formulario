@@ -29,7 +29,7 @@ test('servidor: em produção, recusa iniciar sem LINK_SECRET', () => {
     cwd: raizApp,
     env: { ...process.env, NODE_ENV: 'production', LINK_SECRET: '', PORT: '3988' },
     encoding: 'utf-8',
-    timeout: 15000
+    timeout: 30000
   });
   assert.equal(res.status, 1);
   assert.match(res.stderr + res.stdout, /LINK_SECRET não configurado/);

@@ -200,7 +200,8 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
           cargaHoraria: headers.findIndex(h => h.includes('CARGA')),
           protocolo: headers.findIndex(h => h.includes('PROTOCOLO')),
           token: headers.findIndex(h => h === 'TOKEN'),
-          link: headers.findIndex(h => h === 'LINK' || h.includes('FORMULARIO'))
+          link: headers.findIndex(h => h === 'LINK' || h.includes('FORMULARIO')),
+          dataInsercao: headers.findIndex(h => h.includes('INSERID') || h.includes('DATA INSER'))
         };
 
         const solicitacoes = [];
@@ -227,6 +228,8 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             protocolo: idx.protocolo !== -1 ? r[idx.protocolo] || '' : '',
             // Coluna T ("Link"): link individual do aluno, gravado por gravarLinksNaPlanilha
             link: String((idx.link !== -1 ? r[idx.link] : r[COLUNA_LINK_IDX]) || '').trim(),
+            // Coluna U ("Inserido na Planilha em")
+            dataInsercao: String((idx.dataInsercao !== -1 ? r[idx.dataInsercao] : r[20]) || '').trim(),
             statusOriginal: idx.status !== -1 ? r[idx.status] : ''
           });
         }
