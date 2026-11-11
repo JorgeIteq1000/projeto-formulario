@@ -22,7 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const PUBLIC_FORM_URL = process.env.PUBLIC_FORM_URL || 'https://newsolicitacoes.vercel.app';
+const PUBLIC_FORM_URL = (process.env.PUBLIC_FORM_URL || 'https://solicitacao.certificadoies.com.br').replace(/\/+$/, '');
 const LINK_SECRET = process.env.LINK_SECRET || 'dev-secret-change-in-production';
 const DISPAROS_LOG_FILE = path.resolve(__dirname, '../data/disparos_whatsapp.json');
 

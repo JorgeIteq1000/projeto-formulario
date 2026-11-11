@@ -15,7 +15,7 @@ import { dispararMensagemAlunoZionic } from './zionicClient.js';
 
 dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env') });
 
-const PUBLIC_FORM_URL = process.env.PUBLIC_FORM_URL || 'https://newsolicitacoes.vercel.app';
+const PUBLIC_FORM_URL = (process.env.PUBLIC_FORM_URL || 'https://solicitacao.certificadoies.com.br').replace(/\/+$/, '');
 const LINK_SECRET = process.env.LINK_SECRET || 'dev-secret-change-in-production';
 
 function gerarToken(cpf, dataReferencia) {

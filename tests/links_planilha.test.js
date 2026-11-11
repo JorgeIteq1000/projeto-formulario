@@ -9,7 +9,7 @@ const CAB = [
   'DATA INÍCIO (ISO)', 'CRIAÇÃO MATRÍCULA (ISO)', 'USER ID', 'RG', 'Nacionalidade',
   'Data de Nascimento', 'Protocolo', 'Link'
 ];
-const BASE = 'https://newsolicitacoes.vercel.app/solicitacoes/';
+const BASE = 'https://solicitacao.certificadoies.com.br/solicitacoes/';
 
 function planilha(linhas) {
   const gravado = [];

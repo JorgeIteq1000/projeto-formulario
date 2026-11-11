@@ -78,7 +78,7 @@ Quando for publicar em `certificadosies.com.br`:
 
 1. No arquivo `.env`, altere a URL base:
    ```env
-   PUBLIC_FORM_URL=https://certificadosies.com.br
+   PUBLIC_FORM_URL=https://solicitacao.certificadoies.com.br
    ```
 2. Gere a versão de produção do frontend:
    ```bash
@@ -87,7 +87,7 @@ Quando for publicar em `certificadosies.com.br`:
 3. No Hostinger (VPS ou Node.js Selector):
    - Aponte a aplicação para `server.js`;
    - Os links enviados aos alunos pelo WhatsApp serão montados automaticamente no formato:
-     `https://certificadosies.com.br/solicitacoes/<token>`
+     `https://solicitacao.certificadoies.com.br/solicitacoes/<token>`
 
 ---
 

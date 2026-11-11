@@ -64,7 +64,7 @@
 ### 1. Conexão do Disparo Ativo via WhatsApp com IA (Zionic)
 - [x] **Mapeamento e Leitura da Base:**
   - Nome (coluna C), telefone (coluna L) e todas as solicitações do aluno agrupadas por CPF.
-  - Link individual seguro por aluno, gravado na **coluna T** da planilha (`https://newsolicitacoes.vercel.app/solicitacoes/:token`).
+  - Link individual seguro por aluno, gravado na **coluna T** da planilha (`https://solicitacao.certificadoies.com.br/solicitacoes/:token`).
 - [x] **Integração com API da Zionic** (pasta `Zionic/`):
   - Contato criado ou reaproveitado (HTTP 409 tratado), conversa localizada e mensagem enviada. Testado com envio real ao Jorge.
   - Mensagem encapsula 1 ou N cursos e usa o link lido da coluna T.
