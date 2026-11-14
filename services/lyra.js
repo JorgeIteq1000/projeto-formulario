@@ -15,6 +15,31 @@ let cachedAuth = {
   token: null,
   expiresAt: 0,
 };
+let loginInFlightPromise = null;
+const filasPorChave = new Map();
+
+const LYRA_TIMEOUT_MS = Number(process.env.LYRA_TIMEOUT_MS || 20000);
+
+function executarNaFilaPorChave(chave, tarefa) {
+  const anterior = filasPorChave.get(chave) || Promise.resolve();
+  const proxima = anterior.catch(() => {}).then(tarefa);
+  const sentinela = proxima.finally(() => {
+    if (filasPorChave.get(chave) === sentinela) {
+      filasPorChave.delete(chave);
+    }
+  });
+  filasPorChave.set(chave, sentinela);
+  return proxima;
+}
+
+function ehErroConflitoRegistro(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    err?.status === 409 ||
+    msg.includes('(409)') ||
+    /livro|folha|registro|book|registry|duplicad|already exists/.test(msg)
+  );
+}
 
 function derivarChaveIvOpenSSL(secret, salt) {
   const pass = Buffer.from(secret, 'utf8');
@@ -85,6 +110,29 @@ function ehIdValido(valor) {
   return Boolean(s && s.toUpperCase() !== 'N/A' && /^[a-f0-9]{24}$/i.test(s));
 }
 
+export function slugificarLyra(texto) {
+  return String(texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function converterDataParaIsoLyra(dataStr) {
+  if (!dataStr) return null;
+  const s = String(dataStr).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return `${s}T03:00:00.000Z`;
+  }
+  const br = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
+  if (br) {
+    return `${br[3]}-${br[2]}-${br[1]}T03:00:00.000Z`;
+  }
+  const dt = new Date(s);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
+
 function criarHeadersLyra(token = null) {
   const headers = {
     Accept: 'application/json',
@@ -102,6 +150,7 @@ function criarHeadersLyra(token = null) {
 
 export function limparCacheTokenLyra() {
   cachedAuth = { token: null, expiresAt: 0 };
+  loginInFlightPromise = null;
 }
 
 export async function obterTokenLyra({ fetchImpl = fetch, forceRefresh = false } = {}) {
@@ -110,35 +159,51 @@ export async function obterTokenLyra({ fetchImpl = fetch, forceRefresh = false }
     return cachedAuth.token;
   }
 
+  if (loginInFlightPromise && !forceRefresh) {
+    return loginInFlightPromise;
+  }
+
   const email = process.env.LYRA_EMAIL;
   const password = process.env.LYRA_PASSWORD;
   if (!email || !password) {
     throw new Error('Credenciais do Lyra não configuradas (LYRA_EMAIL / LYRA_PASSWORD).');
   }
 
-  const loginUrl = process.env.LYRA_LOGIN_URL || LYRA_LOGIN_URL;
-  const res = await fetchImpl(loginUrl, {
-    method: 'POST',
-    headers: criarHeadersLyra(),
-    body: JSON.stringify({ email, password }),
-  });
+  const tarefaLogin = (async () => {
+    const loginUrl = process.env.LYRA_LOGIN_URL || LYRA_LOGIN_URL;
+    const res = await fetchImpl(loginUrl, {
+      method: 'POST',
+      headers: criarHeadersLyra(),
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(LYRA_TIMEOUT_MS),
+    });
 
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`Falha ao autenticar no Lyra (${res.status}): ${txt.slice(0, 200)}`);
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Falha ao autenticar no Lyra (${res.status}): ${txt.slice(0, 200)}`);
+    }
+
+    const json = await res.json();
+    const token = json?.data?.user?.authorization;
+    if (!token) {
+      throw new Error('Resposta de login do Lyra não retornou data.user.authorization.');
+    }
+
+    cachedAuth = {
+      token,
+      expiresAt: extrairExpiracaoJwtMs(token),
+    };
+    return token;
+  })();
+
+  loginInFlightPromise = tarefaLogin;
+  try {
+    return await tarefaLogin;
+  } finally {
+    if (loginInFlightPromise === tarefaLogin) {
+      loginInFlightPromise = null;
+    }
   }
-
-  const json = await res.json();
-  const token = json?.data?.user?.authorization;
-  if (!token) {
-    throw new Error('Resposta de login do Lyra não retornou data.user.authorization.');
-  }
-
-  cachedAuth = {
-    token,
-    expiresAt: extrairExpiracaoJwtMs(token),
-  };
-  return token;
 }
 
 async function requisitarLyra({ method = 'GET', rotaLimpa, body, fetchImpl = fetch }) {
@@ -154,14 +219,33 @@ async function requisitarLyra({ method = 'GET', rotaLimpa, body, fetchImpl = fet
       method,
       headers: criarHeadersLyra(authToken),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: AbortSignal.timeout(LYRA_TIMEOUT_MS),
     });
   };
 
-  let res = await executar(token);
-  if (res.status === 401 || res.status === 403) {
-    token = await obterTokenLyra({ fetchImpl, forceRefresh: true });
-    res = await executar(token);
-  }
+  const tentarComRetryGet = async () => {
+    const maxTentativas = method === 'GET' ? 2 : 1;
+    let ultimoErro = null;
+    for (let t = 0; t < maxTentativas; t += 1) {
+      try {
+        let res = await executar(token);
+        if (res.status === 401 || res.status === 403) {
+          token = await obterTokenLyra({ fetchImpl, forceRefresh: true });
+          res = await executar(token);
+        }
+        if (method === 'GET' && [502, 503, 504].includes(res.status) && t + 1 < maxTentativas) {
+          continue;
+        }
+        return res;
+      } catch (err) {
+        ultimoErro = err;
+        if (t + 1 >= maxTentativas) throw err;
+      }
+    }
+    throw ultimoErro;
+  };
+
+  const res = await tentarComRetryGet();
 
   const text = await res.text().catch(() => '');
   let json = null;
@@ -172,7 +256,9 @@ async function requisitarLyra({ method = 'GET', rotaLimpa, body, fetchImpl = fet
   }
 
   if (!res.ok) {
-    throw new Error(`Erro Lyra ${method} ${rotaLimpa} (${res.status}): ${text.slice(0, 250)}`);
+    const err = new Error(`Erro Lyra ${method} ${rotaLimpa} (${res.status}): ${text.slice(0, 250)}`);
+    err.status = res.status;
+    throw err;
   }
 
   return json;
@@ -273,4 +359,165 @@ export async function cancelarSolicitacaoLyra(
     status: statusRetornado || 'canceled',
     data: json?.data || null,
   };
+}
+
+export async function obterBuildDataLyra(solicitationId, { fetchImpl = fetch } = {}) {
+  const rota = `certificates/certificate-solicitations/build-data/${solicitationId}`;
+  const json = await requisitarLyra({ method: 'GET', rotaLimpa: rota, fetchImpl });
+  if (!json?.data) {
+    throw new Error(`build-data não retornou dados para a solicitação ${solicitationId}.`);
+  }
+  return json.data;
+}
+
+export async function obterProximoLivroRegistroLyra({ certifier, courseType }, { fetchImpl = fetch } = {}) {
+  const slugCert = slugificarLyra(certifier);
+  const slugTipo = slugificarLyra(courseType);
+  if (!slugCert || !slugTipo) {
+    throw new Error(`Certificadora ou tipo de curso inválido para next-book-registry: "${certifier}" / "${courseType}".`);
+  }
+  const rota = `certificates/certificate-solicitations/next-book-registry/${slugCert}/${slugTipo}`;
+  const json = await requisitarLyra({ method: 'GET', rotaLimpa: rota, fetchImpl });
+  if (!json?.data || json.data.book === undefined) {
+    throw new Error(`next-book-registry não retornou livro/folha/registro para ${slugCert}/${slugTipo}.`);
+  }
+  return {
+    book: json.data.book,
+    sheet: json.data.sheet,
+    registry: json.data.registry,
+  };
+}
+
+export async function emitirCertificadoLyra(
+  { solicitationId, cpf, nome, curso, contrato, dataInicio, dataFim } = {},
+  { fetchImpl = fetch } = {},
+) {
+  let idFinal = ehIdValido(solicitationId) ? String(solicitationId).trim() : null;
+
+  if (!idFinal) {
+    const cpfLimpo = limparCpf(cpf);
+    const termos = [cpfLimpo, String(nome || '').trim()].filter(Boolean);
+
+    for (const termo of termos) {
+      const lista = await buscarSolicitacoesPendentesLyra({ searchTerm: termo, fetchImpl });
+      const match = selecionarSolicitacaoCorrespondente(lista, { cpf: cpfLimpo, curso, contrato });
+      if (match?._id || match?.id) {
+        idFinal = match._id || match.id;
+        break;
+      }
+    }
+  }
+
+  if (!idFinal) {
+    return {
+      ok: false,
+      notFound: true,
+      message: 'Solicitação pendente (waiting_approval) não encontrada no Lyra para este aluno/curso.',
+    };
+  }
+
+  const buildData = await obterBuildDataLyra(idFinal, { fetchImpl });
+  const certifier = buildData?.dataCourse?.certifier;
+  const courseType = buildData?.dataCourse?.courseType;
+  const chaveFila = `${slugificarLyra(certifier) || 'default'}/${slugificarLyra(courseType) || 'default'}`;
+
+  const startDateIso = converterDataParaIsoLyra(dataInicio) || buildData?.dataCourse?.startDate;
+  const endDateIso = converterDataParaIsoLyra(dataFim) || buildData?.dataCourse?.endDate;
+
+  const ds = buildData.dataStudent || {};
+  const dc = buildData.dataCourse || {};
+  const disciplinas = Array.isArray(buildData.disciplines)
+    ? buildData.disciplines.map((d) => ({
+        _name: d._name,
+        workload: d.workload,
+        frequency: d.frequency ?? 100,
+        teacher: d.teacher,
+        titration: d.titration,
+        grade: d.grade ?? 10,
+      }))
+    : [];
+
+  return executarNaFilaPorChave(chaveFila, async () => {
+    const maxTentativasLivro = 3;
+
+    for (let tentativa = 1; tentativa <= maxTentativasLivro; tentativa += 1) {
+      const bookRegistry = await obterProximoLivroRegistroLyra({ certifier, courseType }, { fetchImpl });
+
+      const payload = {
+        metadata: { manualUpdate: true },
+        type: buildData.type || 'digital',
+        dataStudent: {
+          name: ds.name,
+          cpf: ds.cpf,
+          rg: ds.rg,
+          studentRegistrationCode: ds.studentRegistrationCode,
+          naturalessCity: ds.naturalessCity,
+          naturalessState: ds.naturalessState,
+          nationality: ds.nationality,
+          birthDate: ds.birthDate,
+        },
+        dataCourse: {
+          course: dc.course,
+          courseType: dc.courseType,
+          certifier: dc.certifier,
+          workload: dc.workload,
+          knowledgeArea: dc.knowledgeArea,
+          startDate: startDateIso,
+          endDate: endDateIso,
+          objective: dc.objective ?? null,
+          program: dc.program ?? null,
+        },
+        disciplines: disciplinas,
+        bookRegistry,
+      };
+
+      try {
+        // 1. Atualiza a solicitação com as datas e dados completos
+        await requisitarLyra({
+          method: 'PUT',
+          rotaLimpa: `certificates/certificate-solicitations/${idFinal}`,
+          body: payload,
+          fetchImpl,
+        });
+
+        // 2. Aprova e emite o certificado
+        const jsonApprove = await requisitarLyra({
+          method: 'PUT',
+          rotaLimpa: `certificates/certificate-solicitations/${idFinal}/approve`,
+          body: payload,
+          fetchImpl,
+        });
+
+        const statusRetornado = jsonApprove?.data?.status;
+        const certificateId = jsonApprove?.data?.metadata?._certificateId || null;
+
+        if (statusRetornado !== 'approved' && jsonApprove?.code !== 200) {
+          return {
+            ok: false,
+            solicitationId: idFinal,
+            message: `Resposta inesperada do Lyra ao aprovar: ${JSON.stringify(jsonApprove).slice(0, 200)}`,
+          };
+        }
+
+        return {
+          ok: true,
+          solicitationId: idFinal,
+          certificateId,
+          status: statusRetornado || 'approved',
+          startDate: startDateIso,
+          endDate: endDateIso,
+          bookRegistry,
+          data: jsonApprove?.data || null,
+        };
+      } catch (err) {
+        if (ehErroConflitoRegistro(err) && tentativa < maxTentativasLivro) {
+          console.warn(
+            `⚠️  [LYRA] Conflito de livro/registro na tentativa ${tentativa} (${chaveFila}); consultando próximo número disponível...`,
+          );
+          continue;
+        }
+        throw err;
+      }
+    }
+  });
 }

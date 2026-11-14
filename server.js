@@ -19,7 +19,7 @@ import { criarCardAlunoSPA } from './services/bitrix24.js';
 import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
 import { tipoCursoNoEscopo } from './services/escopo.js';
 import { buscarCargaHoraria } from './services/cargaHoraria.js';
-import { cancelarSolicitacaoLyra } from './services/lyra.js';
+import { cancelarSolicitacaoLyra, emitirCertificadoLyra } from './services/lyra.js';
 import {
   validarDataEvolucao17Meses,
   validarDataConclusao,
@@ -499,12 +499,67 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     ? listaPeriodos.filter((p) => !p.ultrapassaHoje && !p.cancelado)
     : (link.cursos || []);
 
-  // Criação do card no Bitrix24 SPA (DT1046_76:CLIENT padrão, ou DT1046_76:PREPARATION com observação/revisão)
+  // Emissão automática no Lyra com as datas aprovadas para cada curso
+  registro.emissaoLyra = [];
+  if (SHEET_SOMENTE_LEITURA) {
+    console.log('ℹ️  Planilha em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): emissão automática no Lyra não executada.');
+  } else if (process.env.LYRA_EMAIL && process.env.LYRA_PASSWORD) {
+    for (const c of cursosParaCertificar) {
+      const dataInicio = c.dataInicioCustomizada || c.dataInicio || c.dataInicioISO || null;
+      const dataFim = c.dataFimCustomizada || c.dataFim || c.dataFimISO || null;
+      try {
+        const resLyra = await emitirCertificadoLyra({
+          cpf: link.cpf,
+          nome: link.nome,
+          curso: c.curso,
+          contrato: c.contrato,
+          dataInicio,
+          dataFim,
+        });
+        registro.emissaoLyra.push({
+          curso: c.curso,
+          ok: Boolean(resLyra.ok),
+          notFound: Boolean(resLyra.notFound),
+          solicitationId: resLyra.solicitationId || null,
+          certificateId: resLyra.certificateId || null,
+          bookRegistry: resLyra.bookRegistry || null,
+          startDate: resLyra.startDate || null,
+          endDate: resLyra.endDate || null,
+          message: resLyra.message || null,
+        });
+        if (resLyra.ok) {
+          console.log(`🎓 [LYRA] Certificado emitido para ${link.nome} | ${c.curso} | ID: ${resLyra.solicitationId} | Cert: ${resLyra.certificateId || 'N/A'}`);
+        } else {
+          console.warn(`⚠️  [LYRA] Não foi possível emitir ${c.curso} (${link.nome}): ${resLyra.message}`);
+        }
+      } catch (err) {
+        console.error(`❌ [LYRA] Erro ao emitir ${c.curso} (${link.nome}):`, err.message);
+        registro.emissaoLyra.push({
+          curso: c.curso,
+          ok: false,
+          message: err.message,
+        });
+      }
+    }
+  }
+
+  const falhasLyra = registro.emissaoLyra.filter((e) => !e.ok);
+  const avisoLyra = falhasLyra.length > 0
+    ? falhasLyra.map((f) => `⚠️ Emissão automática no Lyra pendente (${f.curso}): ${f.message || 'Erro desconhecido'}`).join('\n')
+    : null;
+  const observacaoBitrix = [registro.observacao, avisoLyra].filter(Boolean).join('\n\n') || null;
+  const temRevisaoBitrix = temRevisao || falhasLyra.length > 0;
+  if (falhasLyra.length > 0) {
+    registro.temRevisao = true;
+    registro.bitrixStageId = process.env.BITRIX24_SPA_STAGE_REVISAO || 'DT1046_76:PREPARATION';
+  }
+
+  // Criação do card no Bitrix24 SPA (DT1046_76:CLIENT padrão, ou DT1046_76:PREPARATION com observação/revisão/pendência Lyra)
   try {
     const resBitrix = await criarCardAlunoSPA({
       nome: link.nome,
-      observacao: registro.observacao,
-      temRevisao,
+      observacao: observacaoBitrix,
+      temRevisao: temRevisaoBitrix,
       resumoCustomizacao,
       cursos: cursosParaCertificar,
       protocolo: registro.protocolo
@@ -550,7 +605,8 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     protocolo: registro.protocolo,
     respondidoEm: registro.dataSubmissaoFormatada,
     bitrixCardId: registro.bitrixCardId,
-    bitrixStageId: registro.bitrixStageId
+    bitrixStageId: registro.bitrixStageId,
+    emissaoLyra: registro.emissaoLyra
   });
 });
 
@@ -611,6 +667,25 @@ app.post('/api/lyra/cancelar-expirados', async (req, res) => {
   const resultados = [];
   for (let i = 0; i < itens.length; i += 1) {
     const item = itens[i] || {};
+    const cpfItem = String(item.cpf || '').replace(/\D/g, '');
+    const jaRespondido = cpfItem
+      ? [...links.values()].some(
+          (l) => String(l.cpf || '').replace(/\D/g, '') === cpfItem && (respostas.has(l.token) || enviosEmAndamento.has(l.token)),
+        )
+      : false;
+
+    if (jaRespondido) {
+      resultados.push({
+        index: i,
+        cpf: item.cpf || null,
+        curso: item.curso || null,
+        ok: false,
+        alreadyAnswered: true,
+        message: 'Aluno já respondeu ao formulário; cancelamento no Lyra bloqueado para evitar conflito.',
+      });
+      continue;
+    }
+
     try {
       const resultado = await cancelarSolicitacaoLyra({
         solicitationId: item.solicitationId,
