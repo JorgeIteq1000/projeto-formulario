@@ -116,19 +116,32 @@ Executa `node --test "tests/*.test.js"`, incluindo testes de:
 
 ---
 
+## 🔒 Autenticação da Equipe (Painel Administrativo)
+
+Para acessar o painel administrativo (`https://certificadoies.com.br/`), os colaboradores devem autenticar-se na tela de login corporativa.
+- **Credenciais**: O login e a senha de acesso são os mesmos utilizados para acessar a **Central de Diplomas** (cadastrados na aba `USUARIOS` da planilha Google Sheets, GID `1338320797`).
+- **Segurança Blindada (DevTools F12)**: A autenticação é processada 100% no servidor (Node.js). Nenhuma senha ou lista de usuários é transmitida ao cliente ou exposta no console/DevTools do navegador.
+- **Sessão por Token HMAC-SHA256**: Ao logar com sucesso, é emitido um token assinado com 12 horas de validade, exigido nas rotas administrativas (`/api/solicitacoes`, `/api/sincronizar`, `/api/estatisticas`, etc.).
+- **Acesso Livre para Alunos**: O acesso dos estudantes via `/solicitacoes/:token` permanece 100% público e direto.
+
+---
+
 ## 📂 Estrutura Principal do Projeto
 
 - [`server.js`](file:///d:/projeto-formulario/server.js): Servidor Express, rotas `/api/*`, agrupamento na janela de 96h, validações e orquestração Lyra + Bitrix24 + Sheets.
+- [`services/authUsuarios.js`](file:///d:/projeto-formulario/services/authUsuarios.js): Autenticação da equipe via aba `USUARIOS` da planilha, cache e geração/validação de tokens HMAC-SHA256.
 - [`services/lyra.js`](file:///d:/projeto-formulario/services/lyra.js): Autenticação JWT, criptografia AES-256-CBC compatível com `api-gateway.faculdadeesp.com.br`, cancelamento e emissão sequencial com `next-book-registry`.
-- [`services/googleSheets.js`](file:///d:/projeto-formulario/services/googleSheets.js): Leitura/escrita na aba principal e leitura de tokens cancelados na aba `Solicitaões Canceladas`.
+- [`services/googleSheets.js`](file:///d:/projeto-formulario/services/googleSheets.js): Leitura/escrita na aba principal, aba `USUARIOS` e tokens cancelados em `Solicitaões Canceladas`.
 - [`services/bitrix24.js`](file:///d:/projeto-formulario/services/bitrix24.js): Criação de cards no SPA do Bitrix24 (`CLIENT` / `PREPARATION`).
 - [`services/escopo.js`](file:///d:/projeto-formulario/services/escopo.js): Filtro de escopo (apenas Extensão e Aperfeiçoamento).
 - [`services/cargaHoraria.js`](file:///d:/projeto-formulario/services/cargaHoraria.js): Resolução de carga horária via catálogo do Lyra.
 - [`services/respostasStore.js`](file:///d:/projeto-formulario/services/respostasStore.js): Persistência atômica das respostas em `data/respostas.json`.
 - [`scripts/googleAppsScript.gs`](file:///d:/projeto-formulario/scripts/googleAppsScript.gs): Automação de links na coluna T e rotina horária de expiração de 96h.
+- [`src/components/LoginView.jsx`](file:///d:/projeto-formulario/src/components/LoginView.jsx): Tela de login corporativo com validação no backend.
 - [`src/components/StudentForm.jsx`](file:///d:/projeto-formulario/src/components/StudentForm.jsx): Interface do formulário do aluno (incluindo tela de prazo de 96h expirado).
 - [`src/components/AdminKanban.jsx`](file:///d:/projeto-formulario/src/components/AdminKanban.jsx): Painel administrativo de acompanhamento.
-
+- [`docs/manual_apresentacao.html`](file:///d:/projeto-formulario/docs/manual_apresentacao.html): Manual operacional e apresentação executiva em HTML standalone com capturas de tela em base64.
+- [`docs/manual_apresentacao.docx`](file:///d:/projeto-formulario/docs/manual_apresentacao.docx): Manual operacional e apresentação executiva em formato DOCX.
 
 ---
 
