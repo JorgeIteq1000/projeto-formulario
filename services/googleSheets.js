@@ -259,7 +259,10 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
           protocolo: headers.findIndex(h => h.includes('PROTOCOLO')),
           token: headers.findIndex(h => h === 'TOKEN'),
           link: headers.findIndex(h => h === 'LINK' || h.includes('FORMULARIO')),
-          dataInsercao: headers.findIndex(h => h.includes('INSERID') || h.includes('DATA INSER'))
+          dataInsercao: headers.findIndex(h => h.includes('INSERID') || h.includes('DATA INSER')),
+          statusWhatsApp: headers.findIndex(h => h.includes('STATUS WHATSAPP') || h === 'WHATSAPP_STATUS' || h.includes('STATUS ZIONIC')),
+          dataUltimoWhatsApp: headers.findIndex(h => h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA' || h.includes('DATA WHATSAPP')),
+          totalLembretesWhatsApp: headers.findIndex(h => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT')
         };
 
         const solicitacoes = [];
@@ -288,7 +291,10 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             link: String((idx.link !== -1 ? r[idx.link] : r[COLUNA_LINK_IDX]) || '').trim(),
             // Coluna U ("Inserido na Planilha em")
             dataInsercao: String((idx.dataInsercao !== -1 ? r[idx.dataInsercao] : r[20]) || '').trim(),
-            statusOriginal: idx.status !== -1 ? r[idx.status] : ''
+            statusOriginal: idx.status !== -1 ? r[idx.status] : '',
+            statusWhatsApp: idx.statusWhatsApp !== -1 ? String(r[idx.statusWhatsApp] || '').trim() : '',
+            dataUltimoWhatsApp: idx.dataUltimoWhatsApp !== -1 ? String(r[idx.dataUltimoWhatsApp] || '').trim() : '',
+            totalLembretesWhatsApp: idx.totalLembretesWhatsApp !== -1 ? (Number(r[idx.totalLembretesWhatsApp]) || 0) : 0
           });
         }
 
@@ -636,5 +642,113 @@ export async function carregarSolicitacoesCanceladas({ spreadsheetId, sheetsOver
     return { tokensCancelados, fonte: 'erro' };
   }
 }
+
+/**
+ * Grava o status e timestamp da régua de WhatsApp na aba de solicitações
+ * nas colunas de controle: STATUS WHATSAPP, DATA ULTIMO WHATSAPP, TOTAL LEMBRETES WHATSAPP.
+ * Cria os cabeçalhos se ainda não existirem.
+ *
+ * @param {Object} params
+ * @param {string} params.spreadsheetId
+ * @param {Array<{cpf: string, statusWhatsApp: string, dataUltimoWhatsApp?: string, totalLembretes?: number}>} params.itens
+ * @param {boolean} [params.dryRun]
+ * @param {object} [params.sheetsOverride]
+ */
+export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = [], dryRun = false, sheetsOverride = null }) {
+  const sheets = sheetsOverride || inicializarGoogleAuth().sheets;
+  if (!sheets || !spreadsheetId) {
+    return { sucesso: false, motivo: 'Planilha não configurada' };
+  }
+
+  try {
+    const nomeAba = await descobrirNomeAba(sheets, spreadsheetId);
+    const rowsRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${nomeAba}'!A1:Z`
+    });
+    const rows = rowsRes.data.values || [];
+    if (!rows.length) return { sucesso: false, motivo: 'Planilha vazia' };
+    const headers = rows[0] || [];
+
+    const colCpfIdx = headers.findIndex((h) => semAcento(h) === 'CPF');
+    if (colCpfIdx === -1) return { sucesso: false, motivo: 'Coluna CPF não encontrada' };
+
+    let colStatusIdx = headers.findIndex((h) => semAcento(h).includes('STATUS WHATSAPP') || semAcento(h) === 'WHATSAPP_STATUS');
+    let colDataIdx = headers.findIndex((h) => semAcento(h).includes('DATA ULTIMO WHATSAPP') || semAcento(h) === 'WHATSAPP_DATA');
+    let colTotalIdx = headers.findIndex((h) => semAcento(h).includes('LEMBRETES') || semAcento(h) === 'WHATSAPP_COUNT');
+
+    const updates = [];
+    let proximaColIdx = headers.length;
+
+    if (colStatusIdx === -1) {
+      colStatusIdx = proximaColIdx++;
+      const letra = idxParaColunaA1(colStatusIdx);
+      updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['STATUS WHATSAPP']] });
+    }
+    if (colDataIdx === -1) {
+      colDataIdx = proximaColIdx++;
+      const letra = idxParaColunaA1(colDataIdx);
+      updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['DATA ULTIMO WHATSAPP']] });
+    }
+    if (colTotalIdx === -1) {
+      colTotalIdx = proximaColIdx++;
+      const letra = idxParaColunaA1(colTotalIdx);
+      updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['TOTAL LEMBRETES WHATSAPP']] });
+    }
+
+    const letraStatus = idxParaColunaA1(colStatusIdx);
+    const letraData = idxParaColunaA1(colDataIdx);
+    const letraTotal = idxParaColunaA1(colTotalIdx);
+
+    const porCpf = new Map();
+    for (const it of itens) {
+      const cpfLimpo = String(it?.cpf || '').replace(/\D/g, '').padStart(11, '0');
+      if (cpfLimpo) porCpf.set(cpfLimpo, it);
+    }
+
+    let linhasAfetadas = 0;
+    const agoraStr = new Date().toLocaleString('pt-BR');
+
+    for (let i = 1; i < rows.length; i++) {
+      const digitos = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
+      if (!digitos || !porCpf.has(digitos)) continue;
+
+      const info = porCpf.get(digitos);
+      const linhaNum = i + 1;
+
+      if (info.statusWhatsApp) {
+        updates.push({ range: `'${nomeAba}'!${letraStatus}${linhaNum}`, values: [[info.statusWhatsApp]] });
+      }
+      updates.push({ range: `'${nomeAba}'!${letraData}${linhaNum}`, values: [[info.dataUltimoWhatsApp || agoraStr]] });
+      if (typeof info.totalLembretes === 'number') {
+        updates.push({ range: `'${nomeAba}'!${letraTotal}${linhaNum}`, values: [[String(info.totalLembretes)]] });
+      }
+      linhasAfetadas++;
+    }
+
+    if (!dryRun && updates.length) {
+      const TAMANHO_LOTE = 500;
+      for (let i = 0; i < updates.length; i += TAMANHO_LOTE) {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          resource: { valueInputOption: 'RAW', data: updates.slice(i, i + TAMANHO_LOTE) }
+        });
+      }
+      console.log(`✅ [GOOGLE SHEETS] Status do WhatsApp atualizado em ${linhasAfetadas} linha(s) (${porCpf.size} aluno(s)).`);
+    }
+
+    return {
+      sucesso: true,
+      dryRun,
+      alunos: porCpf.size,
+      linhasAfetadas,
+      totalUpdates: updates.length
+    };
+  } catch (err) {
+    console.error('❌ Erro ao gravar status do WhatsApp no Google Sheets:', err.message);
+    return { sucesso: false, erro: err.message };
+  }
+}
+
 
 

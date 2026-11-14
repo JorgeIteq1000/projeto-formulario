@@ -48,3 +48,14 @@
   - Identificada causa raiz em que o servidor local dependia exclusivamente do arquivo `data/respostas.json` para definir o status `EMITIR`.
   - Quando alunos já estavam como `STATUS DO EVENTO: EMITIR` e possuíam protocolo preenchido na planilha Google Sheets (caso da aluna Ianca Pires Paulino, protocolo `CERT-2026-797774`), o painel mantinha o aluno em `ENTRADA`.
   - Corrigido `server.js` em `carregarBase()`, `/api/solicitacoes`, `/api/link/:token`, `/api/resposta/:token` e `/api/estatisticas` para reconhecer automaticamente o status e protocolo vindos da planilha como autoridade, hidratando em memória e movendo o card imediatamente para `EMITIR`.
+
+- [x] **Tarefa 10: Régua Automatizada de Notificações via WhatsApp (Zionic) com Proteção Anti-Bloqueio (60s)**
+  - Implementada régua em 4 estágios em [`Zionic/reguaWhatsApp.js`](file:///d:/projeto-formulario/Zionic/reguaWhatsApp.js):
+    1. **D0 (Boas-vindas):** Envio imediato do link seguro de 96h assim que o aluno cai na planilha pelo Listador.
+    2. **Lembrete Diário (24h):** Mensagem periódica a cada 24 horas enquanto o formulário estiver pendente e com prazo > 2h.
+    3. **Alerta Crítico (2h):** Aviso urgente quando faltarem 2 horas para o cancelamento automático.
+    4. **Expirado (96h):** Notificação institucional informando que o prazo encerrou e orientando a solicitar novamente pelo Portal do Aluno.
+  - Implementada **proteção anti-bloqueio WhatsApp**: intervalo obrigatório de 60 segundos entre cada disparo individual de aluno.
+  - Criada persistência em colunas do Google Sheets (`STATUS WHATSAPP`, `DATA ULTIMO WHATSAPP`, `TOTAL LEMBRETES WHATSAPP`) via `gravarStatusWhatsAppNaPlanilha` em `services/googleSheets.js`.
+  - Integrada a execução da régua ao workflow [`listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml) logo após a varredura do Listador em Python.
+  - Criada suíte de testes unitários [`tests/regua_whatsapp.test.js`](file:///d:/projeto-formulario/tests/regua_whatsapp.test.js) com 100% de aprovação.
