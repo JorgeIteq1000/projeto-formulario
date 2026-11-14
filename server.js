@@ -243,6 +243,13 @@ async function carregarBase() {
     const dataReferencia = maisRecente.toISOString().slice(0, 10);
     const token = gerarToken(cpf, dataReferencia);
 
+    const statusOriginalPlanilha = itens.some((i) =>
+      String(i.statusOriginal || '').trim().toUpperCase() === 'EMITIR' ||
+      String(i.protocolo || '').trim().length > 0
+    ) ? 'EMITIR' : 'ENTRADA';
+    const protocoloPlanilha = primeiroPreenchido('protocolo') || null;
+    const inseridoPlanilhaEm = primeiroPreenchido('dataInsercao') || null;
+
     links.set(token, {
       token,
       cpf,
@@ -251,11 +258,25 @@ async function carregarBase() {
       dataNascimento: primeiroPreenchido('dataNascimento'),
       rg: primeiroPreenchido('rg'),
       naturalidade: primeiroPreenchido('naturalidade'),
+      statusPlanilha: statusOriginalPlanilha,
+      protocoloPlanilha,
+      inseridoPlanilhaEm,
       // Link já gravado na coluna T da planilha (só vale se for deste mesmo token)
       linkPlanilha: ((itens.find((i) => i.link && String(i.link).endsWith(`/${token}`)) || {}).link) || '',
       dataReferencia,
       cursos
     });
+
+    // Se na planilha já consta como EMITIR ou com Protocolo preenchido, hidrata respostas em memória
+    if (!respostas.has(token) && statusOriginalPlanilha === 'EMITIR') {
+      respostas.set(token, {
+        protocolo: protocoloPlanilha || 'EMITIR',
+        dataSubmissao: new Date().toISOString(),
+        dataSubmissaoFormatada: inseridoPlanilhaEm || new Date().toLocaleString('pt-BR'),
+        statusBitrix: 'EMITIR',
+        origemPlanilha: true
+      });
+    }
   }
 
   console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais | ${tokensCancelados.size} cancelado(s) (96h).`);
@@ -352,7 +373,10 @@ app.get('/api/link/:token', async (req, res) => {
     return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
   }
 
-  const resposta = respostas.get(link.token) || null;
+  const resposta = respostas.get(link.token) || (link.statusPlanilha === 'EMITIR' ? {
+    protocolo: link.protocoloPlanilha || 'EMITIR',
+    dataSubmissaoFormatada: link.inseridoPlanilhaEm || null
+  } : null);
 
   res.json({
     sucesso: true,
@@ -391,7 +415,7 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
   }
 
-  if (respostas.has(link.token) || enviosEmAndamento.has(link.token)) {
+  if (respostas.has(link.token) || enviosEmAndamento.has(link.token) || link.statusPlanilha === 'EMITIR') {
     return res.status(409).json({
       sucesso: false,
       mensagem: 'Este formulário já foi enviado. Não é possível alterar após o envio.'
@@ -711,13 +735,19 @@ app.post('/api/auth/logout', (req, res) => {
 
 // Status da integração e estatísticas gerais
 app.get('/api/estatisticas', middlewareAutenticacaoAdmin, (req, res) => {
+  let respondidos = 0;
+  for (const l of links.values()) {
+    if (respostas.has(l.token) || l.statusPlanilha === 'EMITIR') {
+      respondidos++;
+    }
+  }
   res.json({
     sucesso: true,
     dados: {
       totalSolicitacoes,
       totalLinks: links.size,
-      totalRespondidos: respostas.size,
-      totalPendentes: links.size - respostas.size,
+      totalRespondidos: respondidos,
+      totalPendentes: Math.max(0, links.size - respondidos),
       integracao: statusIntegracao
     }
   });
@@ -817,6 +847,7 @@ app.post('/api/lyra/cancelar-expirados', async (req, res) => {
 app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
   const dados = [...links.values()].map((l) => {
     const r = respostas.get(l.token);
+    const estaEmitir = Boolean(r) || l.statusPlanilha === 'EMITIR';
     return {
       token: l.token,
       link: montarUrl(l.token, req),
@@ -825,8 +856,13 @@ app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
       telefone: l.telefone,
       dataReferencia: l.dataReferencia,
       cursos: l.cursos,
-      status: r ? 'EMITIR' : 'ENTRADA',
-      resposta: r || null
+      status: estaEmitir ? 'EMITIR' : 'ENTRADA',
+      resposta: r || (l.statusPlanilha === 'EMITIR' ? {
+        protocolo: l.protocoloPlanilha || 'EMITIR',
+        dataSubmissaoFormatada: l.inseridoPlanilhaEm || null,
+        statusBitrix: 'EMITIR',
+        origemPlanilha: true
+      } : null)
     };
   });
   res.json({

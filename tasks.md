@@ -43,3 +43,8 @@
 - [x] **Tarefa 8: Commit e Push das Alterações no GitHub**
   - Enviar todas as alterações para a branch `main` no GitHub.
   - Confirmar integridade de deploy.
+
+- [x] **Tarefa 9: Sincronização Bidirecional de Status da Planilha no Kanban e Estatísticas (Correção de Estado)**
+  - Identificada causa raiz em que o servidor local dependia exclusivamente do arquivo `data/respostas.json` para definir o status `EMITIR`.
+  - Quando alunos já estavam como `STATUS DO EVENTO: EMITIR` e possuíam protocolo preenchido na planilha Google Sheets (caso da aluna Ianca Pires Paulino, protocolo `CERT-2026-797774`), o painel mantinha o aluno em `ENTRADA`.
+  - Corrigido `server.js` em `carregarBase()`, `/api/solicitacoes`, `/api/link/:token`, `/api/resposta/:token` e `/api/estatisticas` para reconhecer automaticamente o status e protocolo vindos da planilha como autoridade, hidratando em memória e movendo o card imediatamente para `EMITIR`.
