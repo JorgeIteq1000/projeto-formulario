@@ -27,10 +27,10 @@ CHAVE_SECRETA = "9pYz4paxNPln9nuMC2tEG596"
 BASE_URL_API = "https://api-gateway.faculdadeesp.com.br/"
 URL_LOGIN_ESTATICA = "https://api-gateway.faculdadeesp.com.br/U2FsdGVkX18tJxVXlIIZptWAhw0ik7pOGx/b1OQG8SGT8oun6VP/MYl5CMxQjrGK"
 
-# Credenciais e Planilha Fixas para Automação
-EMAIL_ACESSO = "comercial@iteqescolas.com.br"
-SENHA_ACESSO = "N@talia16103010"
-ABA_PLANILHA = "Extensões e Aperfeiçoamentos"
+# Credenciais e Planilha Fixas para Automação (suporte a variáveis de ambiente para nuvem / GitHub Actions)
+EMAIL_ACESSO = os.environ.get("LYRA_EMAIL") or os.environ.get("EMAIL_ACESSO") or "comercial@iteqescolas.com.br"
+SENHA_ACESSO = os.environ.get("LYRA_PASSWORD") or os.environ.get("SENHA_ACESSO") or "N@talia16103010"
+ABA_PLANILHA = os.environ.get("GOOGLE_SHEET_TAB") or "Extensões e Aperfeiçoamentos"
 
 HEADERS_PADRAO = {
     "Accept": "application/json", "Content-Type": "application/json", "Company": "iteq",
@@ -112,13 +112,40 @@ def bater_na_api(rota_limpa, headers, tentativas=3):
 
 def setup_google_sheets(worksheet_name_param):
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__)) if not getattr(sys, 'frozen', False) else os.path.dirname(sys.executable)
-        caminho_cred = os.path.join(script_dir, JSON_KEYFILE_PATH) if not os.path.exists(JSON_KEYFILE_PATH) else JSON_KEYFILE_PATH
-        
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_name(caminho_cred, scope)
+        creds = None
+
+        # 1. Suporte a credencial injetada via Secret / Variável de Ambiente (GitHub Actions / Cloud)
+        env_cred = os.environ.get('GOOGLE_CREDENTIALS')
+        env_cred_b64 = os.environ.get('GOOGLE_CREDENTIALS_BASE64')
+
+        if env_cred:
+            env_cred_str = env_cred.strip()
+            if env_cred_str.startswith('{'):
+                info = json.loads(env_cred_str)
+                creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
+            elif os.path.exists(env_cred_str):
+                creds = ServiceAccountCredentials.from_json_keyfile_name(env_cred_str, scope)
+        elif env_cred_b64:
+            raw_json = base64.b64decode(env_cred_b64.strip()).decode('utf-8')
+            info = json.loads(raw_json)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(info, scope)
+
+        # 2. Fallback para arquivo local 123.json
+        if not creds:
+            script_dir = os.path.dirname(os.path.abspath(__file__)) if not getattr(sys, 'frozen', False) else os.path.dirname(sys.executable)
+            caminho_cred = os.path.join(script_dir, JSON_KEYFILE_PATH) if not os.path.exists(JSON_KEYFILE_PATH) else JSON_KEYFILE_PATH
+            if not os.path.exists(caminho_cred):
+                caminho_cred = os.path.join(os.getcwd(), 'LISTADOR', JSON_KEYFILE_PATH)
+            creds = ServiceAccountCredentials.from_json_keyfile_name(caminho_cred, scope)
+
         client = gspread.authorize(creds)
-        spreadsheet = client.open(GOOGLE_SHEET_NAME)
+        sheet_id = os.environ.get('GOOGLE_SHEET_ID')
+        if sheet_id:
+            spreadsheet = client.open_by_key(sheet_id)
+        else:
+            spreadsheet = client.open(GOOGLE_SHEET_NAME)
+
         try:
             sheet = spreadsheet.worksheet(worksheet_name_param)
         except gspread.exceptions.WorksheetNotFound:

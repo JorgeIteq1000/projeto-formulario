@@ -18,3 +18,8 @@ data/
 
 # Dados pessoais de alunos (testes locais)
 src/data/dadosAlunos.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class

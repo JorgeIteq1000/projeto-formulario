@@ -909,6 +909,12 @@
             </thead>
             <tbody>
               <tr>
+                <td><strong>Varredura e Extração de Solicitações (Listador)</strong></td>
+                <td>O colaborador precisava rodar scripts Python manualmente no terminal e manter o PC ligado consumindo CPU.</td>
+                <td>Workflow 100% autônomo no GitHub Actions a cada 20 minutos em nuvem. Zero consumo de CPU local e zero intervenção manual.</td>
+                <td><span class="badge-pill badge-rose">NÃO PRECISA FAZER</span></td>
+              </tr>
+              <tr>
                 <td><strong>Cobrança de alunos e envio de links</strong></td>
                 <td>Envio de e-mails manuais, telefonemas e cobranças insistentes.</td>
                 <td>Disparo ativo no WhatsApp com régua de 96h via Zionic IA.</td>
@@ -981,7 +987,22 @@
           O ecossistema é composto por quatro motores integrados que operam de forma assíncrona e resiliente:
         </p>
 
+        <div class="callout callout-emerald" style="margin-bottom: 22px;">
+          <div class="callout-title emerald">☁️ Inovação: Varredura Contínua 100% em Nuvem (GitHub Actions Cron — a cada 20 min)</div>
+          <div class="callout-body">
+            Com a integração do script do Listador (<code>LISTADOR/listador-extensoes-aperf.py</code>) ao <strong>GitHub Actions</strong>, a equipe não precisa mais manter computadores ligados nem rodar scripts manualmente no terminal. A rotina executa a cada <strong>20 minutos</strong> (<code>cron: '*/20 * * * *'</code>), garantindo que novas solicitações entrem na esteira quase em tempo real, 24 horas por dia, 7 dias por semana, com <strong>zero consumo de CPU local</strong>.
+          </div>
+        </div>
+
         <div class="flow-grid">
+          <div class="flow-step-card">
+            <span class="flow-step-badge">0. VARREDURA EM NUVEM (CRON 20 MIN)</span>
+            <div class="flow-step-title">GitHub Actions & Python Listador</div>
+            <div class="flow-step-desc">
+              O script <code>listador-extensoes-aperf.py</code> roda automaticamente a cada 20 minutos no GitHub Actions. Ele se conecta à API da Faculdade ESP/Lyra, filtra novos pedidos de Extensão e Aperfeiçoamento, busca telefones cadastrais e insere na planilha com zero consumo de CPU da máquina local.
+            </div>
+          </div>
+
           <div class="flow-step-card">
             <span class="flow-step-badge">1. INGESTÃO & LINKS (SHEETS/GAS)</span>
             <div class="flow-step-title">Google Sheets & Google Apps Script</div>
