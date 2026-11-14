@@ -106,6 +106,12 @@ const REDES_VALIDAS = ['particular', 'estadual', 'municipal'];
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // Garante que a base foi carregada antes de atender qualquer rota /api (essencial no Vercel serverless)
@@ -323,11 +329,12 @@ const MENSAGEM_EXPIRADO_96H = 'O prazo de 96 horas para preenchimento desta soli
 // Dados do link: nome, CPF e cursos da janela de 24h
 app.get('/api/link/:token', async (req, res) => {
   const token = req.params.token;
-  if (!links.has(token) && !tokensCancelados.has(token)) {
+  if (!links.has(token) || tokensCancelados.has(token)) {
     await sincronizarSeNecessario();
   }
 
-  if (tokensCancelados.has(token)) {
+  const link = links.get(token);
+  if (!link && tokensCancelados.has(token)) {
     return res.status(410).json({
       sucesso: false,
       cancelado: true,
@@ -336,7 +343,6 @@ app.get('/api/link/:token', async (req, res) => {
     });
   }
 
-  const link = links.get(token);
   if (!link) {
     return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
   }
@@ -362,11 +368,12 @@ app.get('/api/link/:token', async (req, res) => {
 // Envio do formulário pelo aluno
 app.post('/api/link/:token/resposta', async (req, res) => {
   const token = req.params.token;
-  if (!links.has(token) && !tokensCancelados.has(token)) {
+  if (!links.has(token) || tokensCancelados.has(token)) {
     await sincronizarSeNecessario();
   }
 
-  if (tokensCancelados.has(token)) {
+  const link = links.get(token);
+  if (!link && tokensCancelados.has(token)) {
     return res.status(410).json({
       sucesso: false,
       cancelado: true,
@@ -375,7 +382,6 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     });
   }
 
-  const link = links.get(token);
   if (!link) {
     return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
   }
