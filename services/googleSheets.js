@@ -125,6 +125,7 @@ export function inicializarGoogleAuth() {
 // Coluna T (índice 19): onde fica o link individual de cada aluno
 const COLUNA_LINK_IDX = 19;
 const TARGET_GID_CANCELADAS = 710641972;
+export const TARGET_GID_USUARIOS = 1338320797;
 
 export const CABECALHOS_CANCELADAS = [
   'SOLICITAÇÃO',

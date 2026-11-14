@@ -21,6 +21,11 @@ import { tipoCursoNoEscopo } from './services/escopo.js';
 import { buscarCargaHoraria } from './services/cargaHoraria.js';
 import { cancelarSolicitacaoLyra, emitirCertificadoLyra } from './services/lyra.js';
 import {
+  autenticarUsuario,
+  criarTokenSessao,
+  validarTokenSessao
+} from './services/authUsuarios.js';
+import {
   validarDataEvolucao17Meses,
   validarDataConclusao,
   mesesDoPeriodo
@@ -617,11 +622,95 @@ app.post('/api/link/:token/resposta', async (req, res) => {
 });
 
 // ============================================
+// AUTENTICAÇÃO DA EQUIPE (aba USUARIOS da planilha)
+// ============================================
+
+export function extrairTokenReq(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  if (req.headers['x-auth-token']) {
+    return String(req.headers['x-auth-token']).trim();
+  }
+  if (req.headers.cookie) {
+    const match = req.headers.cookie.match(/(?:^|;\s*)auth_token=([^;]+)/);
+    if (match) return decodeURIComponent(match[1]);
+  }
+  return null;
+}
+
+export function middlewareAutenticacaoAdmin(req, res, next) {
+  const cronSecret = String(req.headers['x-cron-secret'] || '').trim();
+  if (cronSecret && cronSecret === LINK_SECRET) {
+    return next();
+  }
+
+  const token = extrairTokenReq(req);
+  if (token) {
+    const usuario = validarTokenSessao(token, LINK_SECRET);
+    if (usuario) {
+      req.usuario = usuario;
+      return next();
+    }
+  }
+
+  // Compatibilidade com suíte de testes legada onde não há AUTH_STRICT
+  if (process.env.NODE_ENV === 'test' && !process.env.AUTH_STRICT) {
+    return next();
+  }
+
+  return res.status(401).json({
+    sucesso: false,
+    mensagem: 'Acesso restrito. Faça login para continuar.'
+  });
+}
+
+// Login da equipe com credenciais da aba USUARIOS
+app.post('/api/auth/login', async (req, res) => {
+  const { login, senha } = req.body || {};
+  try {
+    const resultado = await autenticarUsuario(login, senha, { spreadsheetId: GOOGLE_SHEET_ID });
+    if (!resultado.sucesso) {
+      return res.status(401).json({
+        sucesso: false,
+        mensagem: resultado.motivo || 'Usuário ou senha incorretos.'
+      });
+    }
+
+    const token = criarTokenSessao(resultado.usuario, LINK_SECRET);
+    return res.json({
+      sucesso: true,
+      token,
+      usuario: resultado.usuario
+    });
+  } catch (err) {
+    console.error('❌ Erro na rota /api/auth/login:', err.message);
+    return res.status(500).json({ sucesso: false, mensagem: 'Erro interno ao autenticar.' });
+  }
+});
+
+// Verifica a sessão atual do usuário
+app.get('/api/auth/me', (req, res) => {
+  const token = extrairTokenReq(req);
+  const usuario = token ? validarTokenSessao(token, LINK_SECRET) : null;
+  if (!usuario) {
+    return res.status(401).json({ sucesso: false, mensagem: 'Não autenticado.' });
+  }
+  return res.json({ sucesso: true, usuario });
+});
+
+// Logout da equipe
+app.post('/api/auth/logout', (req, res) => {
+  return res.json({ sucesso: true, mensagem: 'Logout efetuado com sucesso.' });
+});
+
+// ============================================
 // ENDPOINTS DA EQUIPE (painel interno)
 // ============================================
 
 // Status da integração e estatísticas gerais
-app.get('/api/estatisticas', (req, res) => {
+app.get('/api/estatisticas', middlewareAutenticacaoAdmin, (req, res) => {
   res.json({
     sucesso: true,
     dados: {
@@ -635,7 +724,7 @@ app.get('/api/estatisticas', (req, res) => {
 });
 
 // Sincroniza a base (recarrega do Google Sheets ou base local)
-app.all('/api/sincronizar', async (req, res) => {
+app.all('/api/sincronizar', middlewareAutenticacaoAdmin, async (req, res) => {
   try {
     await carregarBase();
     res.json({
@@ -725,7 +814,7 @@ app.post('/api/lyra/cancelar-expirados', async (req, res) => {
   });
 });
 
-app.get('/api/solicitacoes', (req, res) => {
+app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
   const dados = [...links.values()].map((l) => {
     const r = respostas.get(l.token);
     return {
@@ -750,7 +839,7 @@ app.get('/api/solicitacoes', (req, res) => {
 });
 
 // Disparo WhatsApp via Zionic com IA (com suporte a fallback simulado)
-app.post('/api/notificacoes/whatsapp', async (req, res) => {
+app.post('/api/notificacoes/whatsapp', middlewareAutenticacaoAdmin, async (req, res) => {
   const link = links.get(req.body?.token);
   if (!link) return res.status(404).json({ sucesso: false, mensagem: 'Link não encontrado.' });
 

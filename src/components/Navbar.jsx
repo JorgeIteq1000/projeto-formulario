@@ -1,6 +1,7 @@
-import { Award, LayoutDashboard, Sparkles } from 'lucide-react';
+import React from 'react';
+import { Award, LayoutDashboard, Sparkles, LogOut, UserCheck } from 'lucide-react';
 
-export default function Navbar({ activeTab, setActiveTab, estatisticas }) {
+export default function Navbar({ activeTab, setActiveTab, estatisticas, usuario, onLogout }) {
   const respondidos = estatisticas?.totalRespondidos || 0;
 
   return (
@@ -42,6 +43,28 @@ export default function Navbar({ activeTab, setActiveTab, estatisticas }) {
             <span>Fluxo da Automação</span>
           </button>
         </nav>
+
+        {usuario && (
+          <div className="navbar-user-box">
+            <div className="navbar-user-info">
+              <span className="navbar-user-name" title={usuario.login}>
+                {usuario.nome || usuario.login}
+              </span>
+              <span className="navbar-user-badge">● Online</span>
+            </div>
+            {onLogout && (
+              <button
+                type="button"
+                className="navbar-logout-btn"
+                onClick={onLogout}
+                title="Sair do painel"
+              >
+                <LogOut size={14} />
+                <span>Sair</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

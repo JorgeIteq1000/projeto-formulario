@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { authFetch } from '../utils/apiAuth.js';
 import {
   LayoutDashboard,
   Search,
@@ -28,7 +29,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
   const carregar = async () => {
     setCarregando(true);
     try {
-      const res = await fetch('/api/solicitacoes');
+      const res = await authFetch('/api/solicitacoes');
       const json = await res.json();
       if (json.sucesso) {
         setItens(json.dados);
@@ -45,7 +46,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
   const sincronizarBase = async () => {
     setSincronizando(true);
     try {
-      const res = await fetch('/api/sincronizar', { method: 'POST' });
+      const res = await authFetch('/api/sincronizar', { method: 'POST' });
       const json = await res.json();
       if (json.sucesso) {
         mostrarToast(json.mensagem || 'Base sincronizada com sucesso!');
@@ -94,7 +95,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
 
   const simularWhatsapp = async (item) => {
     try {
-      const res = await fetch('/api/notificacoes/whatsapp', {
+      const res = await authFetch('/api/notificacoes/whatsapp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: item.token })
