@@ -38,6 +38,7 @@ function formatarTipoComCarga(curso) {
 export default function StudentForm({ token }) {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
+  const [cancelado96h, setCancelado96h] = useState(false);
   const [dados, setDados] = useState(null);
 
   // Profissional da Educação que atua na Rede Municipal de ensino: null | true | false
@@ -59,6 +60,7 @@ export default function StudentForm({ token }) {
         const json = await res.json();
         if (!ativo) return;
         if (!res.ok || !json.sucesso) {
+          setCancelado96h(Boolean(json.cancelado));
           setErro(json.mensagem || 'Link inválido ou expirado.');
         } else {
           setDados(json.dados);
@@ -341,12 +343,14 @@ export default function StudentForm({ token }) {
 
   if (erro) {
     return (
-      <div className="sf-card sf-center">
-        <AlertCircle size={44} className="text-rose" />
-        <h2 className="sf-title">Link indisponível</h2>
+      <div className="sf-card sf-center animate-fade-in">
+        {cancelado96h ? <Clock size={44} className="text-amber" /> : <AlertCircle size={44} className="text-rose" />}
+        <h2 className="sf-title">{cancelado96h ? 'Prazo de 96 horas expirado' : 'Link indisponível'}</h2>
         <p className="sf-muted">{erro}</p>
         <p className="sf-muted sf-small">
-          Caso precise, abra uma nova solicitação pela Área do Aluno.
+          {cancelado96h
+            ? 'Acesse o Portal do Aluno para realizar uma nova solicitação de certificado.'
+            : 'Caso precise, abra uma nova solicitação pela Área do Aluno.'}
         </p>
       </div>
     );

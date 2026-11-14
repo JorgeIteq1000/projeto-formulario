@@ -10,6 +10,7 @@ import { dispararMensagemAlunoZionic } from './Zionic/zionicClient.js';
 import { montarMensagemCertificado } from './Zionic/mensagemTemplate.js';
 import {
   carregarSolicitacoes,
+  carregarSolicitacoesCanceladas,
   registrarRespostaNoSheet,
   inicializarGoogleAuth,
   gravarLinksNaPlanilha
@@ -154,11 +155,13 @@ function gerarToken(cpf, dataReferencia) {
 // CARGA DA BASE (Google Sheets com fallback local)
 // ============================================
 const links = new Map();
+const tokensCancelados = new Map();
 const respostas = carregarRespostas(RESPOSTAS_FILE);
 // Tokens com envio em andamento: impede dois envios simultâneos (duplo clique) de criar dois cards
 const enviosEmAndamento = new Set();
 if (respostas.size) console.log(`💾 ${respostas.size} resposta(s) restaurada(s) de ${RESPOSTAS_FILE}.`);
 let totalSolicitacoes = 0;
+let ultimaSincronizacaoMs = 0;
 let statusIntegracao = {
   fonte: 'inicializando',
   clientEmail: null,
@@ -167,7 +170,13 @@ let statusIntegracao = {
 
 async function carregarBase() {
   links.clear();
+  tokensCancelados.clear();
   const res = await carregarSolicitacoes({ spreadsheetId: GOOGLE_SHEET_ID });
+  const canceladas = await carregarSolicitacoesCanceladas({ spreadsheetId: GOOGLE_SHEET_ID });
+  for (const [tok, info] of canceladas.tokensCancelados) {
+    tokensCancelados.set(tok, info);
+  }
+  ultimaSincronizacaoMs = Date.now();
   // O formulário atende apenas Extensão e Aperfeiçoamento: demais tipos são ignorados
   const todasLinhas = res.dados || [];
   const linhas = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso));
@@ -237,7 +246,18 @@ async function carregarBase() {
     });
   }
 
-  console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais (dados pessoais extraídos da aba principal).`);
+  console.log(`📊 Base carregada [Fonte: ${statusIntegracao.fonte}]: ${totalSolicitacoes} solicitações → ${links.size} links individuais | ${tokensCancelados.size} cancelado(s) (96h).`);
+}
+
+// Recarrega a planilha sob demanda (com intervalo mínimo de 30s) quando um token não é encontrado em cache
+async function sincronizarSeNecessario() {
+  if (!GOOGLE_SHEET_ID) return;
+  if (Date.now() - ultimaSincronizacaoMs < 30_000) return;
+  try {
+    await carregarBase();
+  } catch (err) {
+    console.warn('⚠️  Falha ao resincronizar base sob demanda:', err.message);
+  }
 }
 
 let baseCarregandoPromise = null;
@@ -297,9 +317,25 @@ export async function sincronizarLinksNaPlanilha({ dryRun = false } = {}) {
 // ENDPOINTS DO ALUNO (acesso via link individual)
 // ============================================
 
+const MENSAGEM_EXPIRADO_96H = 'O prazo de 96 horas para preenchimento desta solicitação expirou e ela foi cancelada. Por favor, abra uma nova solicitação dentro do Portal do Aluno.';
+
 // Dados do link: nome, CPF e cursos da janela de 24h
-app.get('/api/link/:token', (req, res) => {
-  const link = links.get(req.params.token);
+app.get('/api/link/:token', async (req, res) => {
+  const token = req.params.token;
+  if (!links.has(token) && !tokensCancelados.has(token)) {
+    await sincronizarSeNecessario();
+  }
+
+  if (tokensCancelados.has(token)) {
+    return res.status(410).json({
+      sucesso: false,
+      cancelado: true,
+      motivo: 'prazo_96h',
+      mensagem: MENSAGEM_EXPIRADO_96H
+    });
+  }
+
+  const link = links.get(token);
   if (!link) {
     return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
   }
@@ -324,7 +360,21 @@ app.get('/api/link/:token', (req, res) => {
 
 // Envio do formulário pelo aluno
 app.post('/api/link/:token/resposta', async (req, res) => {
-  const link = links.get(req.params.token);
+  const token = req.params.token;
+  if (!links.has(token) && !tokensCancelados.has(token)) {
+    await sincronizarSeNecessario();
+  }
+
+  if (tokensCancelados.has(token)) {
+    return res.status(410).json({
+      sucesso: false,
+      cancelado: true,
+      motivo: 'prazo_96h',
+      mensagem: MENSAGEM_EXPIRADO_96H
+    });
+  }
+
+  const link = links.get(token);
   if (!link) {
     return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
   }

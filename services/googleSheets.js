@@ -124,8 +124,36 @@ export function inicializarGoogleAuth() {
 
 // Coluna T (índice 19): onde fica o link individual de cada aluno
 const COLUNA_LINK_IDX = 19;
+const TARGET_GID_CANCELADAS = 710641972;
+
+export const CABECALHOS_CANCELADAS = [
+  'SOLICITAÇÃO',
+  'CPF',
+  'NOME',
+  'TIPO DE CERTIFICADO',
+  'TIPO DE CURSO',
+  'CURSO',
+  'CERTIFICADORA',
+  'CONTRATO',
+  'STATUS DO EVENTO',
+  'ID DO EVENTO',
+  'DATA CRIAÇÃO EVENTO',
+  'TELEFONE',
+  'DATA INÍCIO (ISO)',
+  'CRIAÇÃO MATRÍCULA (ISO)',
+  'USER ID',
+  'RG',
+  'Nacionalidade',
+  'Data de Nascimento',
+  'Protocolo',
+  'Link',
+  'Token',
+  'Data Cancelamento',
+  'Motivo Cancelamento'
+];
 
 let nomeAbaCache = null;
+let nomeAbaCanceladasCache = null;
 
 // Descobre a aba da planilha (prioriza GID 267936837 ou "Extensões e Aperfeiçoamentos")
 async function descobrirNomeAba(sheets, spreadsheetId) {
@@ -157,6 +185,35 @@ async function descobrirNomeAba(sheets, spreadsheetId) {
   } catch {
     return 'Extensões e Aperfeiçoamentos';
   }
+}
+
+// Descobre a aba de solicitações canceladas (prioriza GID 710641972)
+async function descobrirNomeAbaCanceladas(sheets, spreadsheetId) {
+  if (nomeAbaCanceladasCache) return nomeAbaCanceladasCache;
+  if (process.env.GOOGLE_SHEET_TAB_CANCELADAS) {
+    nomeAbaCanceladasCache = process.env.GOOGLE_SHEET_TAB_CANCELADAS;
+    return nomeAbaCanceladasCache;
+  }
+
+  try {
+    const meta = await sheets.spreadsheets.get({ spreadsheetId });
+    const porGid = meta.data.sheets.find(s => s.properties?.sheetId === TARGET_GID_CANCELADAS);
+    if (porGid) {
+      nomeAbaCanceladasCache = porGid.properties.title;
+      return nomeAbaCanceladasCache;
+    }
+
+    const porNome = meta.data.sheets.find(s =>
+      (s.properties?.title || '').toLowerCase().includes('cancelad')
+    );
+    if (porNome) {
+      nomeAbaCanceladasCache = porNome.properties.title;
+      return nomeAbaCanceladasCache;
+    }
+  } catch {
+    // Fallback abaixo
+  }
+  return 'Solicitaões Canceladas';
 }
 
 /**
@@ -485,5 +542,98 @@ export async function gravarLinksNaPlanilha({ spreadsheetId, itens = [], dryRun 
 // ============================================
 // Os dados exibidos no certificado (nascimento, RG, naturalidade) ficam numa aba própria, para não
 // mexer na aba de solicitações preenchida pela automação. Colunas: CPF, DATA DE NASCIMENTO, RG, NATURALIDADE.
+
+/**
+ * Extrai o token de uma URL no formato ".../solicitacoes/<token>" ou retorna o valor se já for um token.
+ */
+export function extrairTokenDeLink(valor) {
+  const txt = String(valor || '').trim();
+  if (!txt) return '';
+  const m = /\/solicitacoes\/([A-Za-z0-9_-]+)/.exec(txt);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{10,}$/.test(txt)) return txt;
+  return '';
+}
+
+/**
+ * Garante que a aba "Solicitações Canceladas" (GID 710641972) possua os cabeçalhos padrão na linha 1.
+ */
+export async function garantirCabecalhosCanceladas({ spreadsheetId, sheetsOverride = null } = {}) {
+  const sheets = sheetsOverride || inicializarGoogleAuth().sheets;
+  if (!sheets || !spreadsheetId) return { ok: false, motivo: 'Planilha não configurada' };
+
+  try {
+    const nomeAba = await descobrirNomeAbaCanceladas(sheets, spreadsheetId);
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${nomeAba}'!1:1`
+    });
+    const linha1 = res.data.values?.[0] || [];
+    if (linha1.length === 0) {
+      const ultimaCol = idxParaColunaA1(CABECALHOS_CANCELADAS.length - 1);
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${nomeAba}'!A1:${ultimaCol}1`,
+        valueInputOption: 'RAW',
+        resource: { values: [CABECALHOS_CANCELADAS] }
+      });
+      return { ok: true, criado: true, aba: nomeAba, colunas: CABECALHOS_CANCELADAS.length };
+    }
+    return { ok: true, criado: false, aba: nomeAba, colunas: linha1.length };
+  } catch (err) {
+    console.warn(`⚠️  Não foi possível verificar cabeçalhos da aba de canceladas: ${err.message}`);
+    return { ok: false, erro: err.message };
+  }
+}
+
+/**
+ * Lê os tokens/CPFs já cancelados por expiração de 96h da aba "Solicitações Canceladas".
+ * @returns {Promise<{ tokensCancelados: Map<string, object>, fonte: string }>}
+ */
+export async function carregarSolicitacoesCanceladas({ spreadsheetId, sheetsOverride = null } = {}) {
+  const sheets = sheetsOverride || inicializarGoogleAuth().sheets;
+  const tokensCancelados = new Map();
+  if (!sheets || !spreadsheetId) return { tokensCancelados, fonte: 'nenhuma' };
+
+  try {
+    const nomeAba = await descobrirNomeAbaCanceladas(sheets, spreadsheetId);
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${nomeAba}'!A1:Z`
+    });
+    const rows = res.data.values || [];
+    if (rows.length <= 1) return { tokensCancelados, fonte: `google_sheets:${nomeAba}` };
+
+    const headers = rows[0].map(semAcento);
+    const iToken = headers.findIndex((h) => h === 'TOKEN');
+    const iLink = headers.findIndex((h) => h === 'LINK' || h.includes('FORMULARIO'));
+    const iCpf = headers.findIndex((h) => h === 'CPF');
+    const iNome = headers.findIndex((h) => h === 'NOME');
+    const iDataCancel = headers.findIndex((h) => h.includes('DATA CANCELAMENTO'));
+    const iMotivo = headers.findIndex((h) => h.includes('MOTIVO'));
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const tokenDireto = iToken !== -1 ? extrairTokenDeLink(r[iToken]) : '';
+      const tokenLink = iLink !== -1 ? extrairTokenDeLink(r[iLink]) : '';
+      const token = tokenDireto || tokenLink;
+      if (!token) continue;
+
+      const cpfRaw = iCpf !== -1 ? String(r[iCpf] || '').replace(/\D/g, '') : '';
+      tokensCancelados.set(token, {
+        token,
+        cpf: cpfRaw ? cpfRaw.padStart(11, '0') : '',
+        nome: iNome !== -1 ? String(r[iNome] || '').trim() : '',
+        dataCancelamento: iDataCancel !== -1 ? String(r[iDataCancel] || '').trim() : '',
+        motivo: iMotivo !== -1 ? String(r[iMotivo] || '').trim() : 'Prazo de 96 horas expirado'
+      });
+    }
+
+    return { tokensCancelados, fonte: `google_sheets:${nomeAba}` };
+  } catch (err) {
+    console.warn(`⚠️  Não foi possível ler aba de canceladas: ${err.message}`);
+    return { tokensCancelados, fonte: 'erro' };
+  }
+}
 
 

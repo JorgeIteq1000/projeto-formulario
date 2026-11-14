@@ -1,7 +1,12 @@
 import './_env.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gravarLinksNaPlanilha } from '../services/googleSheets.js';
+import {
+  gravarLinksNaPlanilha,
+  carregarSolicitacoesCanceladas,
+  extrairTokenDeLink,
+  CABECALHOS_CANCELADAS
+} from '../services/googleSheets.js';
 
 const CAB = [
   'SOLICITAÇÃO', 'CPF', 'NOME', 'TIPO DE CERTIFICADO', 'TIPO DE CURSO', 'CURSO', 'CERTIFICADORA',
@@ -79,4 +84,35 @@ test('links na coluna T: dryRun não grava nada', async () => {
   });
   assert.equal(r.linhasAtualizadas, 1);
   assert.equal(p.gravado.length, 0);
+});
+
+test('carregarSolicitacoesCanceladas: extrai tokens cancelados tanto da coluna Token quanto da coluna Link', async () => {
+  const linhaA = new Array(CABECALHOS_CANCELADAS.length).fill('');
+  linhaA[1] = '4097334824';
+  linhaA[2] = 'Maria Silva';
+  linhaA[19] = 'https://certificadoies.com.br/solicitacoes/TOK_LINK_1234567890';
+  linhaA[21] = '14/11/2026 10:00:00';
+  linhaA[22] = 'Expirado 96h';
+
+  const linhaB = new Array(CABECALHOS_CANCELADAS.length).fill('');
+  linhaB[1] = '11122233344';
+  linhaB[2] = 'João Souza';
+  linhaB[20] = 'TOK_DIRETO_9876543210';
+
+  const mockSheets = {
+    spreadsheets: {
+      get: async () => ({
+        data: { sheets: [{ properties: { sheetId: 710641972, title: 'Solicitaões Canceladas' } }] }
+      }),
+      values: {
+        get: async () => ({ data: { values: [CABECALHOS_CANCELADAS, linhaA, linhaB] } })
+      }
+    }
+  };
+
+  const res = await carregarSolicitacoesCanceladas({ spreadsheetId: 'x', sheetsOverride: mockSheets });
+  assert.equal(res.tokensCancelados.size, 2);
+  assert.equal(res.tokensCancelados.get('TOK_LINK_1234567890').cpf, '04097334824');
+  assert.equal(res.tokensCancelados.get('TOK_DIRETO_9876543210').nome, 'João Souza');
+  assert.equal(extrairTokenDeLink('https://certificadoies.com.br/solicitacoes/ABC123xyz_01'), 'ABC123xyz_01');
 });
