@@ -19,6 +19,7 @@ import { criarCardAlunoSPA } from './services/bitrix24.js';
 import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
 import { tipoCursoNoEscopo } from './services/escopo.js';
 import { buscarCargaHoraria } from './services/cargaHoraria.js';
+import { cancelarSolicitacaoLyra } from './services/lyra.js';
 import {
   validarDataEvolucao17Meses,
   validarDataConclusao,
@@ -585,6 +586,62 @@ app.all('/api/sincronizar', async (req, res) => {
   } catch (err) {
     res.status(500).json({ sucesso: false, mensagem: err.message });
   }
+});
+
+// Cancela solicitações expiradas (96h) no Lyra via chamada autenticada do Google Apps Script
+app.post('/api/lyra/cancelar-expirados', async (req, res) => {
+  const authHeader = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  const cronSecret = String(req.headers['x-cron-secret'] || authHeader || '').trim();
+
+  if (!cronSecret || cronSecret !== LINK_SECRET) {
+    return res.status(401).json({ sucesso: false, mensagem: 'Não autorizado.' });
+  }
+
+  const payload = req.body || {};
+  const itens = Array.isArray(payload.itens)
+    ? payload.itens
+    : Array.isArray(payload)
+      ? payload
+      : [payload];
+
+  if (itens.length === 0) {
+    return res.status(400).json({ sucesso: false, mensagem: 'Nenhum item informado para cancelamento.' });
+  }
+
+  const resultados = [];
+  for (let i = 0; i < itens.length; i += 1) {
+    const item = itens[i] || {};
+    try {
+      const resultado = await cancelarSolicitacaoLyra({
+        solicitationId: item.solicitationId,
+        cpf: item.cpf,
+        nome: item.nome,
+        curso: item.curso,
+        contrato: item.contrato,
+        reason: item.reason,
+      });
+      resultados.push({
+        index: i,
+        cpf: item.cpf || null,
+        curso: item.curso || null,
+        ...resultado,
+      });
+    } catch (err) {
+      resultados.push({
+        index: i,
+        cpf: item.cpf || null,
+        curso: item.curso || null,
+        ok: false,
+        message: err.message,
+      });
+    }
+  }
+
+  return res.json({
+    sucesso: true,
+    total: resultados.length,
+    resultados,
+  });
 });
 
 app.get('/api/solicitacoes', (req, res) => {
