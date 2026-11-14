@@ -122,10 +122,23 @@ export async function executarReguaWhatsApp({
   spreadsheetId = process.env.GOOGLE_SHEET_ID
 } = {}) {
   const agora = new Date();
+
+  const temCredenciaisZionic = Boolean(
+    (process.env.ZIONIC_BEARER_TOKEN && process.env.ZIONIC_BEARER_TOKEN.trim().length > 0) ||
+    (process.env.ZIONIC_EMAIL && process.env.ZIONIC_PASSWORD)
+  );
+
+  let modoEfetivoEnviar = enviar;
+  if (enviar && !temCredenciaisZionic) {
+    console.warn(`\n⚠️  [SEGURANÇA] Credenciais da Zionic não configuradas nos Secrets (ZIONIC_EMAIL ou ZIONIC_BEARER_TOKEN ausentes).`);
+    console.warn(`🛡️  Executando em modo SIMULAÇÃO SEGURA (nenhuma mensagem será enviada até você cadastrar os Secrets).\n`);
+    modoEfetivoEnviar = false;
+  }
+
   console.log(`\n============================================================`);
   console.log(`📱 RÉGUA AUTOMATIZADA DE WHATSAPP (ZIONIC)`);
   console.log(`Data/Hora: ${agora.toLocaleString('pt-BR')}`);
-  console.log(`Modo: ${enviar ? '🚀 ENVIO REAL' : '🔎 SIMULAÇÃO (Dry-Run)'}`);
+  console.log(`Modo: ${modoEfetivoEnviar ? '🚀 ENVIO REAL' : '🔎 SIMULAÇÃO (Dry-Run)'}`);
   console.log(`Intervalo Anti-Bloqueio: ${intervaloSegundos}s por envio`);
   console.log(`============================================================\n`);
 
@@ -298,7 +311,7 @@ export async function executarReguaWhatsApp({
     await gravarLinksNaPlanilha({
       spreadsheetId,
       itens: linksParaGravar,
-      dryRun: !enviar
+      dryRun: !modoEfetivoEnviar
     });
   }
 
@@ -314,7 +327,7 @@ export async function executarReguaWhatsApp({
     console.log(`[${idx + 1}/${limite}] 👤 ${item.nome} | Tel: ${item.telefone} | Etapa: ${item.etapa}`);
     console.log(`⏳ Horas restantes de prazo: ${item.horasRestantes}h`);
 
-    if (enviar) {
+    if (modoEfetivoEnviar) {
       console.log(`🚀 Enviando mensagem via Zionic WhatsApp...`);
       try {
         const resEnvio = await dispararMensagemAlunoZionic({
@@ -408,7 +421,7 @@ export async function executarReguaWhatsApp({
     await gravarStatusWhatsAppNaPlanilha({
       spreadsheetId,
       itens: updatesPlanilha,
-      dryRun: !enviar
+      dryRun: !modoEfetivoEnviar
     });
   }
 

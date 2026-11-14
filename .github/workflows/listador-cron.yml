@@ -13,9 +13,9 @@ concurrency:
 
 jobs:
   executar-listador:
-    name: Varredura de Certificados & Régua de WhatsApp
+    name: Varredura de Certificados (Lyra -> Google Sheets)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout do Repositório
@@ -42,30 +42,3 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           python LISTADOR/listador-extensoes-aperf.py
-
-      - name: Configurar Ambiente Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Instalar Dependências Node.js
-        run: npm ci
-
-      - name: Executar Régua Automatizada de WhatsApp (Zionic)
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_CREDENTIALS_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}
-          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          PUBLIC_FORM_URL: ${{ secrets.PUBLIC_FORM_URL || 'https://certificadoies.com.br' }}
-          LINK_SECRET: ${{ secrets.LINK_SECRET }}
-          ZIONIC_API_URL: ${{ secrets.ZIONIC_API_URL || 'https://api.zionic.app' }}
-          ZIONIC_EMAIL: ${{ secrets.ZIONIC_EMAIL }}
-          ZIONIC_PASSWORD: ${{ secrets.ZIONIC_PASSWORD }}
-          ZIONIC_BEARER_TOKEN: ${{ secrets.ZIONIC_BEARER_TOKEN }}
-          ZIONIC_COMPANY_ID: ${{ secrets.ZIONIC_COMPANY_ID }}
-          ZIONIC_WHATSAPP_INSTANCE_ID: ${{ secrets.ZIONIC_WHATSAPP_INSTANCE_ID }}
-          ZIONIC_INTEGRATION_ID: ${{ secrets.ZIONIC_INTEGRATION_ID }}
-          INTERVALO_DISPARO_SEGUNDOS: "60"
-        run: |
-          node Zionic/reguaWhatsApp.js --enviar

@@ -57,5 +57,7 @@
     4. **Expirado (96h):** Notificação institucional informando que o prazo encerrou e orientando a solicitar novamente pelo Portal do Aluno.
   - Implementada **proteção anti-bloqueio WhatsApp**: intervalo obrigatório de 60 segundos entre cada disparo individual de aluno.
   - Criada persistência em colunas do Google Sheets (`STATUS WHATSAPP`, `DATA ULTIMO WHATSAPP`, `TOTAL LEMBRETES WHATSAPP`) via `gravarStatusWhatsAppNaPlanilha` em `services/googleSheets.js`.
-  - Integrada a execução da régua ao workflow [`listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml) logo após a varredura do Listador em Python.
+  - Separados os workflows no GitHub Actions para controle independente e economia de cota:
+    - [`listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml): Executa exclusivamente o Listador Python a cada 20 minutos.
+    - [`whatsapp-regua-cron.yml`](file:///d:/projeto-formulario/.github/workflows/whatsapp-regua-cron.yml): Executa a Régua de WhatsApp a cada 1 hora com seletor de "envio_real" vs "simulação" e trava de segurança se faltarem credenciais Zionic.
   - Criada suíte de testes unitários [`tests/regua_whatsapp.test.js`](file:///d:/projeto-formulario/tests/regua_whatsapp.test.js) com 100% de aprovação.

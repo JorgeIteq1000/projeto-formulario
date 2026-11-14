@@ -121,31 +121,30 @@ Executa `node --test "tests/*.test.js"`, incluindo testes de:
 
 ---
 
-## ☁️ Automação do Listador e Régua de WhatsApp (GitHub Actions Cron - 20 min)
+## ☁️ Workflows Autônomos em Nuvem (GitHub Actions)
 
-Para eliminar a dependência de manter computadores ligados ou gastar CPU local dos colaboradores:
-- **Workflow**: [`.github/workflows/listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml)
-- **Frequência**: Executa automaticamente a cada 20 minutos (`cron: '*/20 * * * *'`) com suporte a disparo manual sob demanda (`workflow_dispatch`).
-- **Etapas Integradas**:
-  1. **Varredura Lyra (Python)**: Extrai novas solicitações de Extensão e Aperfeiçoamento e grava na planilha Google Sheets.
-  2. **Régua Automatizada de WhatsApp (Node.js - Zionic)**: Dispara automaticamente as notificações e lembretes para os alunos:
-     - **D0 (Boas-vindas)**: Envia o link individual seguro de 96h assim que o aluno cai na planilha.
-     - **Lembrete Diário**: Envia 1 lembrete a cada 24 horas para quem ainda não confirmou o formulário.
-     - **Alerta Crítico (2h)**: Notifica com urgência quando restarem menos de 2 horas para expirar.
-     - **Expirado (96h)**: Informa o cancelamento institucional e orienta reabrir pelo Portal do Aluno.
-  3. **Proteção Anti-Bloqueio WhatsApp**: Intervalo obrigatório de **60 segundos** entre cada mensagem enviada, prevenindo banimentos no chip da Zionic.
-  4. **Persistência das Notificações**: O status do disparo (`STATUS WHATSAPP`, `DATA ULTIMO WHATSAPP`, `TOTAL LEMBRETES WHATSAPP`) é registrado diretamente nas colunas V, W, X da planilha Google Sheets.
-- **Secrets Necessárias no Repositório GitHub**:
-  - `GOOGLE_CREDENTIALS`: JSON completo da conta de serviço Google (ou `GOOGLE_CREDENTIALS_BASE64`).
-  - `GOOGLE_SHEET_ID`: ID da planilha do Google Drive.
-  - `LYRA_EMAIL`: E-mail corporativo de acesso à API Lyra.
-  - `LYRA_PASSWORD`: Senha de acesso à API Lyra.
-  - `LINK_SECRET`: Segredo HMAC para assinatura dos links dos alunos.
-  - `PUBLIC_FORM_URL`: URL base do formulário (ex: `https://certificadoies.com.br`).
-  - `ZIONIC_EMAIL` / `ZIONIC_PASSWORD` (ou `ZIONIC_BEARER_TOKEN`): Acesso à API Zionic.
-  - `ZIONIC_WHATSAPP_INSTANCE_ID`: Identificador da instância do WhatsApp na Zionic.
-  - `ZIONIC_COMPANY_ID` / `ZIONIC_INTEGRATION_ID`: Metadados da empresa na Zionic.
-- **Vantagem Operacional**: Autonomia total sem consumir memória ou processador da equipe, garantindo que novas solicitações entrem na planilha e os alunos sejam notificados quase em tempo real.
+Para manter o repositório **100% privado e seguro**, sem consumir CPU local e otimizando a cota gratuita mensal do GitHub:
+
+### 1. Workflow do Listador (`listador-cron.yml` - a cada 20 min)
+- **Arquivo**: [`.github/workflows/listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml)
+- **Frequência**: Executa automaticamente a cada 20 minutos (`cron: '*/20 * * * *'`) com suporte a disparo manual (`workflow_dispatch`).
+- **Objetivo Exclusivo**: Varredura ultra-rápida no Lyra via Python (`listador-extensoes-aperf.py`), inserindo novas solicitações de Extensão e Aperfeiçoamento na planilha Google Sheets.
+- **Secrets Necessárias**: `GOOGLE_CREDENTIALS`, `GOOGLE_SHEET_ID`, `LYRA_EMAIL`, `LYRA_PASSWORD`.
+
+### 2. Workflow da Régua de WhatsApp (`whatsapp-regua-cron.yml` - a cada 1 hora)
+- **Arquivo**: [`.github/workflows/whatsapp-regua-cron.yml`](file:///d:/projeto-formulario/.github/workflows/whatsapp-regua-cron.yml)
+- **Frequência**: Executa automaticamente a cada 1 hora (`cron: '0 * * * *'`) ou manualmente a qualquer momento.
+- **Controle Flexível**:
+  - No disparo manual via GitHub, permite selecionar entre **"envio_real"** ou **"simulacao"**.
+  - **Trava de Segurança Automática**: Se as credenciais da Zionic não estiverem preenchidas nos Secrets, o workflow opera automaticamente em **Modo Simulação Segura**, impedindo erros ou disparos não autorizados.
+- **Etapas da Régua**:
+  - **D0 (Boas-vindas)**: Envia o link individual seguro de 96h ao novo aluno.
+  - **Lembrete Diário**: Envia 1 lembrete a cada 24 horas para quem ainda não confirmou o formulário.
+  - **Alerta Crítico (2h)**: Notifica com urgência quando restarem menos de 2 horas para expirar.
+  - **Expirado (96h)**: Informa o cancelamento institucional e orienta reabrir pelo Portal do Aluno.
+- **Proteção Anti-Bloqueio**: Intervalo obrigatório de **60 segundos** entre cada mensagem enviada no WhatsApp.
+- **Persistência**: Grava status nas colunas V, W, X da planilha (`STATUS WHATSAPP`, `DATA ULTIMO WHATSAPP`, `TOTAL LEMBRETES WHATSAPP`).
+- **Secrets Opcionais/Necessárias**: `ZIONIC_EMAIL`, `ZIONIC_PASSWORD` (ou `ZIONIC_BEARER_TOKEN`), `ZIONIC_WHATSAPP_INSTANCE_ID`, `LINK_SECRET`, `PUBLIC_FORM_URL`.
 
 ---
 
@@ -164,7 +163,8 @@ Para acessar o painel administrativo (`https://certificadoies.com.br/`), os cola
 - [`server.js`](file:///d:/projeto-formulario/server.js): Servidor Express, rotas `/api/*`, agrupamento na janela de 96h, validações e orquestração Lyra + Bitrix24 + Sheets.
 - [`LISTADOR/listador-extensoes-aperf.py`](file:///d:/projeto-formulario/LISTADOR/listador-extensoes-aperf.py): Script de extração e varredura de solicitações na API Lyra e gravação no Google Sheets.
 - [`Zionic/reguaWhatsApp.js`](file:///d:/projeto-formulario/Zionic/reguaWhatsApp.js): Motor da régua automatizada de notificações e lembretes via WhatsApp (Zionic) com delay de 60s anti-bloqueio.
-- [`.github/workflows/listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml): Workflow GitHub Actions para execução autônoma do Listador e da Régua de WhatsApp a cada 20 minutos em nuvem.
+- [`.github/workflows/listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml): Workflow GitHub Actions para execução autônoma do Listador a cada 20 minutos em nuvem.
+- [`.github/workflows/whatsapp-regua-cron.yml`](file:///d:/projeto-formulario/.github/workflows/whatsapp-regua-cron.yml): Workflow GitHub Actions para execução da Régua de WhatsApp a cada 1 hora em nuvem.
 - [`requirements.txt`](file:///d:/projeto-formulario/requirements.txt): Dependências Python do Listador para execução local e em nuvem.
 - [`services/authUsuarios.js`](file:///d:/projeto-formulario/services/authUsuarios.js): Autenticação da equipe via aba `USUARIOS` da planilha, cache e geração/validação de tokens HMAC-SHA256.
 - [`services/lyra.js`](file:///d:/projeto-formulario/services/lyra.js): Autenticação JWT, criptografia AES-256-CBC compatível com `api-gateway.faculdadeesp.com.br`, cancelamento e emissão sequencial com `next-book-registry`.

@@ -1,0 +1,63 @@
+name: Régua de WhatsApp Zionic (Cron 1h)
+
+on:
+  schedule:
+    # Executa a cada 1 hora de forma autônoma na nuvem
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      modo_envio:
+        description: 'Modo de Execução'
+        required: true
+        default: 'envio_real'
+        type: choice
+        options:
+          - 'envio_real'
+          - 'simulacao'
+
+concurrency:
+  group: whatsapp-regua-cron
+  cancel-in-progress: false
+
+jobs:
+  executar-regua-whatsapp:
+    name: Régua de Notificações WhatsApp (Zionic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Ambiente Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Instalar Dependências Node.js
+        run: npm ci
+
+      - name: Executar Régua Automatizada de WhatsApp
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_CREDENTIALS_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          PUBLIC_FORM_URL: ${{ secrets.PUBLIC_FORM_URL || 'https://certificadoies.com.br' }}
+          LINK_SECRET: ${{ secrets.LINK_SECRET }}
+          ZIONIC_API_URL: ${{ secrets.ZIONIC_API_URL || 'https://api.zionic.app' }}
+          ZIONIC_EMAIL: ${{ secrets.ZIONIC_EMAIL }}
+          ZIONIC_PASSWORD: ${{ secrets.ZIONIC_PASSWORD }}
+          ZIONIC_BEARER_TOKEN: ${{ secrets.ZIONIC_BEARER_TOKEN }}
+          ZIONIC_COMPANY_ID: ${{ secrets.ZIONIC_COMPANY_ID }}
+          ZIONIC_WHATSAPP_INSTANCE_ID: ${{ secrets.ZIONIC_WHATSAPP_INSTANCE_ID }}
+          ZIONIC_INTEGRATION_ID: ${{ secrets.ZIONIC_INTEGRATION_ID }}
+          INTERVALO_DISPARO_SEGUNDOS: "60"
+        run: |
+          if [ "${{ github.event.inputs.modo_envio }}" = "simulacao" ]; then
+            echo "🔎 Executando em MODO SIMULAÇÃO (Dry-Run solicitado via painel)..."
+            node Zionic/reguaWhatsApp.js
+          else
+            echo "🚀 Executando com ENVIO REAL via Zionic..."
+            node Zionic/reguaWhatsApp.js --enviar
+          fi
