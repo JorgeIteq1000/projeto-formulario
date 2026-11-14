@@ -92,7 +92,7 @@ const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || null;
 // Modo somente leitura: a planilha é lida normalmente, mas o status EMITIR não é gravado nela (útil em testes locais)
 const SHEET_SOMENTE_LEITURA = ['1', 'true', 'sim'].includes(String(process.env.GOOGLE_SHEET_SOMENTE_LEITURA || '').toLowerCase());
 // Janela de agrupamento das solicitações em um único link (24 horas)
-const JANELA_HORAS = 24;
+const JANELA_HORAS = 96;
 
 // Arquivo onde as respostas ficam salvas para sobreviver a reinícios (contém dados pessoais; fora do git)
 const RESPOSTAS_FILE = process.env.RESPOSTAS_FILE
@@ -207,7 +207,7 @@ async function carregarBase() {
     porCpf.get(cpf).push(l);
   }
 
-  // Para cada aluno: link = solicitações dentro da janela de 24h até a mais recente
+  // Para cada aluno: link = solicitações dentro da janela de 96h até a mais recente
   for (const [cpf, itens] of porCpf) {
     const datas = itens.map((i) => parseDataBR(i.solicitacao)).filter(Boolean);
     const maisRecente = datas.length ? new Date(Math.max(...datas)) : new Date();
