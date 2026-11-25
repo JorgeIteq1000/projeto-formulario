@@ -23,3 +23,6 @@ src/data/dadosAlunos.json
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Espelho local do Google Apps Script (clasp)
+scripts/apps-script/
