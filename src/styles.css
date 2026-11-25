@@ -2783,3 +2783,221 @@ a.btn-card-primary {
   background: rgba(239, 68, 68, 0.25);
   color: #fff;
 }
+
+
+/* ========================================= */
+/* INTERRUPTOR DE CERTIFICAÇÃO AUTOMÁTICA    */
+/* E BOTÃO MANUAL "EMITIR" NO KANBAN         */
+/* ========================================= */
+.auto-cert-toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s ease;
+  min-width: 340px;
+}
+
+.auto-cert-toggle-card:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.auto-cert-toggle-card.is-active {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.07);
+}
+
+.auto-cert-toggle-card.is-manual {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.auto-cert-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.auto-cert-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.icon-zap-on {
+  color: #34d399;
+}
+
+.icon-zap-off {
+  color: #fbbf24;
+}
+
+.auto-cert-label {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #f9fafb;
+}
+
+.auto-cert-pill {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+}
+
+.auto-cert-pill.pill-on {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.auto-cert-pill.pill-off {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.auto-cert-desc {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.toggle-switch-btn {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: #374151;
+  padding: 2px;
+  cursor: pointer;
+  transition: background 0.22s ease, border-color 0.22s ease;
+  flex-shrink: 0;
+}
+
+.toggle-switch-btn.on {
+  background: #10b981;
+  border-color: #34d399;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.35);
+}
+
+.toggle-switch-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.toggle-switch-thumb {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transform: translateX(0);
+  transition: transform 0.22s ease;
+}
+
+.toggle-switch-btn.on .toggle-switch-thumb {
+  transform: translateX(20px);
+}
+
+.badge-awaiting-emit {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-card-emitir {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  border: 1px solid rgba(52, 211, 153, 0.5);
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.25);
+  transition: all 0.2s ease;
+}
+
+.btn-card-emitir:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+  filter: brightness(1.06);
+}
+
+.btn-card-emitir:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.badge-emitted-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #34d399;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.lyra-status-box {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.07);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  font-size: 0.72rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lyra-status-title {
+  font-weight: 700;
+  color: #6ee7b7;
+}
+
+.lyra-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: #cbd5e1;
+}
+
+.lyra-status-row.ok strong {
+  color: #34d399;
+}
+
+.lyra-status-row.fail strong {
+  color: #fbbf24;
+}
+
+.lyra-status-meta {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+@media (max-width: 768px) {
+  .auto-cert-toggle-card {
+    width: 100%;
+    min-width: unset;
+  }
+}

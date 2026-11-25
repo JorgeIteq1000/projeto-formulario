@@ -73,6 +73,18 @@ def eh_tipo_extensao_ou_aperfeicoamento(tipo_curso):
     norm = normalizar_texto(tipo_curso)
     return "EXTENSAO" in norm or "APERFEICOAMENTO" in norm
 
+def traduzir_status_lyra(status_raw):
+    s = str(status_raw or "").strip().lower()
+    mapa = {
+        "waiting_approval": "Aguardando Aprovação",
+        "approved": "Aprovado",
+        "canceled": "Cancelado",
+        "cancelled": "Cancelado",
+        "pending": "Pendente",
+        "rejected": "Rejeitado",
+    }
+    return mapa.get(s, str(status_raw or "Aguardando Aprovação").strip())
+
 def formatar_data(data_iso):
     if not data_iso or data_iso == "N/A": return "N/A"
     try: return datetime.strptime(data_iso[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
@@ -150,13 +162,14 @@ def setup_google_sheets(worksheet_name_param):
             sheet = spreadsheet.worksheet(worksheet_name_param)
         except gspread.exceptions.WorksheetNotFound:
             log(f"⚠️ Aba '{worksheet_name_param}' não encontrada. Criando automaticamente com cabeçalhos padrão...")
-            sheet = spreadsheet.add_worksheet(title=worksheet_name_param, rows=1000, cols=21)
+            sheet = spreadsheet.add_worksheet(title=worksheet_name_param, rows=1000, cols=24)
             cabecalhos = [
                 'SOLICITAÇÃO', 'CPF', 'NOME', 'TIPO DE CERTIFICADO', 'TIPO DE CURSO',
-                'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO EVENTO', 'ID DO EVENTO',
+                'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO FORMULÁRIO', 'ID DO EVENTO',
                 'DATA CRIAÇÃO EVENTO', 'TELEFONE', 'DATA INÍCIO (ISO)', 'CRIAÇÃO MATRÍCULA (ISO)',
                 'USER ID', 'RG', 'Nacionalidade', 'Data de Nascimento', 'Protocolo', 'Link',
-                'Inserido na Planilha em'
+                'Inserido na Planilha em', 'STATUS LYRA', 'MODIFICAÇÃO DO STATUS',
+                'PRAZO MÍNIMO PARA CONCLUSÃO'
             ]
             sheet.append_row(cabecalhos, value_input_option='USER_ENTERED')
         return sheet
@@ -298,45 +311,80 @@ def executar_rotina_automatizada(session_id=None):
         if not cabecalhos_planilha:
             cabecalhos_planilha = [
                 'SOLICITAÇÃO', 'CPF', 'NOME', 'TIPO DE CERTIFICADO', 'TIPO DE CURSO',
-                'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO EVENTO', 'ID DO EVENTO',
+                'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO FORMULÁRIO', 'ID DO EVENTO',
                 'DATA CRIAÇÃO EVENTO', 'TELEFONE', 'DATA INÍCIO (ISO)', 'CRIAÇÃO MATRÍCULA (ISO)',
                 'USER ID', 'RG', 'Nacionalidade', 'Data de Nascimento', 'Protocolo', 'Link',
-                'Inserido na Planilha em'
+                'Inserido na Planilha em', 'STATUS LYRA', 'MODIFICAÇÃO DO STATUS',
+                'PRAZO MÍNIMO PARA CONCLUSÃO'
             ]
             sheet.append_row(cabecalhos_planilha, value_input_option='USER_ENTERED')
             log("ℹ️ Cabeçalhos inseridos na aba vazia.")
         else:
             norm_headers = [normalizar_texto(h) for h in cabecalhos_planilha]
-            if not any("INSERID" in h for h in norm_headers):
-                log("➕ Cabeçalho 'Inserido na Planilha em' ausente. Adicionando na Coluna U...")
-                try:
-                    sheet.update_cell(1, len(cabecalhos_planilha) + 1, 'Inserido na Planilha em')
-                    cabecalhos_planilha.append('Inserido na Planilha em')
-                except Exception as e:
-                    log(f"⚠️ Não foi possível adicionar cabeçalho na Coluna U: {e}")
+            cabecalhos_extras = [
+                ("INSERID", "Inserido na Planilha em"),
+                ("STATUS LYRA", "STATUS LYRA"),
+                ("MODIFICACAO DO STATUS", "MODIFICAÇÃO DO STATUS"),
+                ("PRAZO MINIMO PARA CONCLUSAO", "PRAZO MÍNIMO PARA CONCLUSÃO"),
+            ]
+            for chave_norm, nome_cab in cabecalhos_extras:
+                if not any(chave_norm in h for h in norm_headers):
+                    log(f"➕ Cabeçalho '{nome_cab}' ausente. Adicionando...")
+                    try:
+                        sheet.update_cell(1, len(cabecalhos_planilha) + 1, nome_cab)
+                        cabecalhos_planilha.append(nome_cab)
+                        norm_headers.append(normalizar_texto(nome_cab))
+                    except Exception as e:
+                        log(f"⚠️ Não foi possível adicionar cabeçalho '{nome_cab}': {e}")
 
         log(f"📋 Colunas detectadas na planilha: {', '.join(cabecalhos_planilha)}")
 
         log("📝 Preparando Anti-Duplicidade do Google Sheets...")
+        dados_existentes = []
+        chaves_existentes = {}
         try:
             dados_existentes = sheet.get_all_values()
-            chaves_existentes = set()
             if len(dados_existentes) > 1:
                 headers_norm = [normalizar_texto(h) for h in dados_existentes[0]]
                 idx_cpf = headers_norm.index("CPF") if "CPF" in headers_norm else 1
                 idx_tipo = headers_norm.index("TIPO DE CERTIFICADO") if "TIPO DE CERTIFICADO" in headers_norm else 3
                 idx_curso = headers_norm.index("CURSO") if "CURSO" in headers_norm else 5
+                idx_status_form = next((i for i, h in enumerate(headers_norm) if "STATUS DO FORMULARIO" in h or "STATUS DO EVENTO" in h), 8)
+                idx_status_lyra = next((i for i, h in enumerate(headers_norm) if "STATUS LYRA" in h), 21)
+                idx_mod_status = next((i for i, h in enumerate(headers_norm) if "MODIFICACAO DO STATUS" in h), 22)
+                idx_prazo_min = next((i for i, h in enumerate(headers_norm) if "PRAZO MINIMO" in h), 23)
 
-                for row in dados_existentes[1:]:
+                for num_linha, row in enumerate(dados_existentes[1:], start=2):
                     cpf_row = row[idx_cpf].strip() if len(row) > idx_cpf else ""
                     tipo_row = row[idx_tipo].strip().upper() if len(row) > idx_tipo else ""
                     curso_row = row[idx_curso].strip().upper() if len(row) > idx_curso else ""
                     if cpf_row and curso_row:
-                        chaves_existentes.add(f"{cpf_row}|{tipo_row}|{curso_row}")
+                        chaves_existentes[f"{cpf_row}|{tipo_row}|{curso_row}"] = {
+                            "row": num_linha,
+                            "status_form": row[idx_status_form].strip() if len(row) > idx_status_form else "",
+                            "status_lyra": row[idx_status_lyra].strip() if len(row) > idx_status_lyra else "",
+                            "mod_status": row[idx_mod_status].strip() if len(row) > idx_mod_status else "",
+                            "prazo_min": row[idx_prazo_min].strip() if len(row) > idx_prazo_min else "",
+                        }
         except Exception as e:
             log(f"⚠️ Erro ao verificar duplicidade: {e}")
-            chaves_existentes = set()
+            chaves_existentes = {}
 
+        def col_idx_para_a1(idx0):
+            res = ""
+            n = idx0
+            while n >= 0:
+                res = chr(65 + (n % 26)) + res
+                n = n // 26 - 1
+            return res
+
+        headers_norm_atual = [normalizar_texto(h) for h in cabecalhos_planilha]
+        col_v_idx = next((i for i, h in enumerate(headers_norm_atual) if "STATUS LYRA" in h), 21)
+        col_x_idx = next((i for i, h in enumerate(headers_norm_atual) if "PRAZO MINIMO" in h), 23)
+        col_v_letra = col_idx_para_a1(col_v_idx)
+        col_x_letra = col_idx_para_a1(col_x_idx)
+
+        updates_existentes = []
         linhas_planilha = []
         for r in resultados:
             cpf = r.get("dataStudent", {}).get("cpf", "").strip()
@@ -346,22 +394,10 @@ def executar_rotina_automatizada(session_id=None):
             if tipo_raw == "digital": tipo_certificado = "Digital"
             elif tipo_raw == "print": tipo_certificado = "Impresso"
             else: tipo_certificado = tipo_raw.capitalize()
-            
-            # Trava anti-duplicidade
-            chave_atual = f"{cpf}|{tipo_certificado.upper()}|{curso.upper()}"
-            if chave_atual in chaves_existentes:
-                continue 
-            chaves_existentes.add(chave_atual)
-            
-            nome = r.get("dataStudent", {}).get("name", "")
-            tipo_curso = r.get("dataCourse", {}).get("courseType", "")
-            certificadora = r.get("dataCourse", {}).get("certifier", "")
-            
-            dt_solicita_crua = r.get("createdAt", "")[:10]
-            try: dt_solicita = datetime.strptime(dt_solicita_crua, "%Y-%m-%d").strftime("%d/%m/%Y")
-            except: dt_solicita = dt_solicita_crua
-                
-            # Extrair dados de matrícula (enrolment)
+
+            status_lyra = traduzir_status_lyra(r.get("status"))
+
+            # Extrair dados de matrícula (enrolment) para Prazo Mínimo e Datas
             contrato = "N/A"
             data_inicio_iso = ""
             criacao_matricula_iso = ""
@@ -374,7 +410,7 @@ def executar_rotina_automatizada(session_id=None):
                 rc = enr.get("registryCourse", {})
                 data_inicio_iso = str(rc.get("dateStart") or enr.get("createdAt") or "")
                 
-                # Previsão de término
+                # Previsão de término (Prazo Mínimo para Conclusão)
                 crs = rc.get("course", {})
                 meses_minimos = crs.get("minMonthsToComplete")
                 data_inicio_fmt = formatar_data(data_inicio_iso)
@@ -382,6 +418,44 @@ def executar_rotina_automatizada(session_id=None):
                     previsao_termino = calcular_previsao_termino(data_inicio_fmt, meses_minimos)
                 else:
                     previsao_termino = formatar_data(enr.get("expiredAt"))
+
+            # Fallback via endpoint de matrícula caso minMonthsToComplete não tenha vindo no resumo
+            if (not previsao_termino or previsao_termino == "N/A") and re.match(r'^[0-9a-fA-F]{24}$', contrato):
+                try:
+                    d_enr = bater_na_api(f'students/enrolments/{contrato}?populate={{}}', headers)
+                    if d_enr and d_enr.get("data"):
+                        enr_det = d_enr["data"]
+                        rc_det = enr_det.get("registryCourse", {})
+                        dt_ini_det = formatar_data(rc_det.get("dateStart") or enr_det.get("createdAt"))
+                        min_m_det = rc_det.get("course", {}).get("minMonthsToComplete")
+                        if min_m_det and dt_ini_det != "N/A":
+                            previsao_termino = calcular_previsao_termino(dt_ini_det, min_m_det)
+                        elif enr_det.get("expiredAt"):
+                            previsao_termino = formatar_data(enr_det.get("expiredAt"))
+                except Exception:
+                    pass
+
+            # Trava anti-duplicidade (atualiza Status Lyra / Prazo Mínimo em linhas já existentes se necessário)
+            chave_atual = f"{cpf}|{tipo_certificado.upper()}|{curso.upper()}"
+            if chave_atual in chaves_existentes:
+                existente = chaves_existentes[chave_atual]
+                row_num = existente["row"]
+                status_form_atual = normalizar_texto(existente["status_form"])
+                # Não sobrescreve Status Lyra se a linha já foi marcada como Cancelado
+                if status_form_atual != "CANCELADO" and existente["status_lyra"] != status_lyra:
+                    updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [[status_lyra]]})
+                if (not existente["prazo_min"] or existente["prazo_min"] == "N/A") and previsao_termino and previsao_termino != "N/A":
+                    updates_existentes.append({"range": f"{col_x_letra}{row_num}", "values": [[previsao_termino]]})
+                continue
+            chaves_existentes[chave_atual] = {"row": -1, "status_form": "", "status_lyra": status_lyra, "mod_status": "", "prazo_min": previsao_termino}
+            
+            nome = r.get("dataStudent", {}).get("name", "")
+            tipo_curso = r.get("dataCourse", {}).get("courseType", "")
+            certificadora = r.get("dataCourse", {}).get("certifier", "")
+            
+            dt_solicita_crua = r.get("createdAt", "")[:10]
+            try: dt_solicita = datetime.strptime(dt_solicita_crua, "%Y-%m-%d").strftime("%d/%m/%Y")
+            except: dt_solicita = dt_solicita_crua
             
             # Dados do Aluno via API (Telefone, RG, Nacionalidade, Data de Nascimento, User ID)
             telefone = "N/A"
@@ -440,6 +514,9 @@ def executar_rotina_automatizada(session_id=None):
                 "CERTIFICADORA": certificadora,
                 "CONTRATO": contrato,
                 "STATUS DO EVENTO": "PENDENTE_ENVIO",
+                "STATUS DO FORMULARIO": "PENDENTE_ENVIO",
+                "STATUS LYRA": status_lyra,
+                "MODIFICACAO DO STATUS": "",
                 "ID DO EVENTO": "N/A",
                 "DATA CRIACAO EVENTO": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "TELEFONE": telefone,
@@ -472,6 +549,14 @@ def executar_rotina_automatizada(session_id=None):
                 linha_ordenada.append(val)
             
             linhas_planilha.append(linha_ordenada)
+
+        if updates_existentes:
+            log(f"🔄 Atualizando {len(updates_existentes)} célula(s) de Status Lyra (Coluna V) / Prazo Mínimo (Coluna X) em linhas existentes...")
+            try:
+                sheet.batch_update(updates_existentes, value_input_option='USER_ENTERED')
+                log("✅ Atualização de linhas existentes concluída!")
+            except Exception as e:
+                log(f"⚠️ Erro ao atualizar colunas V/X de linhas existentes: {e}")
 
         if len(linhas_planilha) == 0:
             log("✅ Base Inteiramente Atualizada! Todos os registros filtrados já constavam na planilha. Encerrando.")

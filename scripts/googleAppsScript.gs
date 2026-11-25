@@ -213,7 +213,10 @@ function cancelarNoLyra_(linhaDados, headers) {
  * Gatilho baseado em tempo (a cada 1 hora):
  * 1. Identifica solicitações pendentes com >= 96h desde DATA CRIAÇÃO EVENTO.
  * 2. Executa o cancelamento no Lyra (`cancelarNoLyra_`).
- * 3. Move as linhas expiradas para a aba "Solicitações Canceladas" (GID 710641972) e apaga da aba principal.
+ * 3. Mantém a linha na MESMA aba ("Extensões e Aperfeiçoamentos") e atualiza:
+ *    - Coluna I (STATUS DO FORMULÁRIO) -> "Cancelado"
+ *    - Coluna V (STATUS LYRA)          -> "Cancelado"
+ *    - Coluna W (MODIFICAÇÃO DO STATUS)-> Data/hora do cancelamento
  * 4. Notifica o servidor (/api/sincronizar) para bloquear o link imediatamente.
  */
 function verificarExpiracao96h() {
@@ -223,81 +226,60 @@ function verificarExpiracao96h() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var aba = obterAbaPorGid_(ss, CONFIG_SCRIPT.GID_EXTENSOES, 'Extensões e Aperfeiçoamentos');
-    var abaCanceladas = obterAbaPorGid_(ss, CONFIG_SCRIPT.GID_CANCELADAS, 'Solicitaões Canceladas');
-    if (!aba || !abaCanceladas) return;
+    if (!aba) return;
 
     var dados = aba.getDataRange().getValues();
     if (dados.length <= 1) return;
 
     var headers = dados[0].map(semAcento_);
-    var idxStatus = headers.findIndex(function (h) { return h.indexOf('STATUS') !== -1; });
+    var idxStatus = headers.findIndex(function (h) {
+      return h === 'STATUS DO FORMULARIO' || h === 'STATUS DO EVENTO';
+    });
+    if (idxStatus === -1) {
+      idxStatus = headers.findIndex(function (h) {
+        return h.indexOf('STATUS') !== -1 && h.indexOf('LYRA') === -1 && h.indexOf('MODIFICACAO') === -1 && h.indexOf('WHATSAPP') === -1;
+      });
+    }
     var idxDataEvento = headers.findIndex(function (h) { return h.indexOf('DATA CRIACAO EVENTO') !== -1; });
     var idxProtocolo = headers.findIndex(function (h) { return h.indexOf('PROTOCOLO') !== -1; });
-    var idxCpf = headers.indexOf('CPF');
-    var idxSolic = headers.findIndex(function (h) { return h.indexOf('SOLICITA') !== -1; });
-    var idxLink = headers.indexOf('LINK');
-    if (idxLink === -1) idxLink = 19;
+    var idxStatusLyra = headers.indexOf('STATUS LYRA');
+    if (idxStatusLyra === -1) idxStatusLyra = 21; // Coluna V
+    var idxModStatus = headers.findIndex(function (h) { return h.indexOf('MODIFICACAO DO STATUS') !== -1; });
+    if (idxModStatus === -1) idxModStatus = 22; // Coluna W
     if (idxDataEvento === -1) return;
-
-    // Garante cabeçalhos na aba de canceladas se estiver vazia
-    if (abaCanceladas.getLastRow() === 0) {
-      var cabCanceladas = dados[0].slice(0, 20);
-      while (cabCanceladas.length < 20) cabCanceladas.push('');
-      cabCanceladas.push('Token', 'Data Cancelamento', 'Motivo Cancelamento');
-      abaCanceladas.appendRow(cabCanceladas);
-    }
 
     var agora = new Date();
     var agoraMs = agora.getTime();
     var limiteMs = CONFIG_SCRIPT.PRAZO_HORAS * 60 * 60 * 1000;
     var dataCancelStr = Utilities.formatDate(agora, 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm:ss');
-    var linhasParaExcluir = [];
-    var novasLinhasCanceladas = [];
+    var linhasCanceladas = [];
 
     for (var i = 1; i < dados.length; i++) {
       var linha = dados[i];
       var status = idxStatus !== -1 ? semAcento_(linha[idxStatus]) : '';
+      var statusLyra = semAcento_(linha[idxStatusLyra]);
       var protocolo = idxProtocolo !== -1 ? String(linha[idxProtocolo] || '').trim() : '';
-      if (status === 'EMITIR' || protocolo) continue;
+      if (status === 'EMITIR' || status === 'CANCELADO' || status === 'CANCELADO_96H' || statusLyra === 'CANCELADO' || protocolo) continue;
 
       var dtCriacao = parseDataPlanilha_(linha[idxDataEvento]);
       if (!dtCriacao) continue;
       if (agoraMs - dtCriacao.getTime() < limiteMs) continue;
 
       if (!cancelarNoLyra_(linha, headers)) {
-        Logger.log('Cancelamento no Lyra falhou para a linha ' + (i + 1) + '; linha mantida.');
+        Logger.log('Cancelamento no Lyra falhou para a linha ' + (i + 1) + '; linha mantida pendente.');
         continue;
       }
 
-      var linkAtual = String(linha[idxLink] || '').trim();
-      var token = extrairTokenDeUrl_(linkAtual);
-      if (!token && idxCpf !== -1) {
-        var cpf = normalizarCpf_(linha[idxCpf]);
-        var dtSolic = idxSolic !== -1 ? parseDataPlanilha_(linha[idxSolic]) : null;
-        var dataRef = Utilities.formatDate(dtSolic || agora, 'UTC', 'yyyy-MM-dd');
-        if (cpf) token = gerarTokenAluno_(cpf, dataRef);
+      var numLinha = i + 1;
+      if (idxStatus !== -1) {
+        aba.getRange(numLinha, idxStatus + 1).setValue('Cancelado');
       }
-
-      var registroCancelado = linha.slice(0, 20);
-      while (registroCancelado.length < 20) registroCancelado.push('');
-      if (idxStatus !== -1) registroCancelado[idxStatus] = 'CANCELADO_96H';
-      registroCancelado.push(token, dataCancelStr, 'Prazo de 96 horas expirado');
-
-      novasLinhasCanceladas.push(registroCancelado);
-      linhasParaExcluir.push(i + 1);
+      aba.getRange(numLinha, idxStatusLyra + 1).setValue('Cancelado');
+      aba.getRange(numLinha, idxModStatus + 1).setValue(dataCancelStr);
+      linhasCanceladas.push(numLinha);
     }
 
-    if (novasLinhasCanceladas.length > 0) {
-      var linhaInicialDestino = abaCanceladas.getLastRow() + 1;
-      abaCanceladas
-        .getRange(linhaInicialDestino, 1, novasLinhasCanceladas.length, novasLinhasCanceladas[0].length)
-        .setValues(novasLinhasCanceladas);
-
-      // Exclui de baixo para cima para não deslocar os índices das linhas acima
-      for (var k = linhasParaExcluir.length - 1; k >= 0; k--) {
-        aba.deleteRow(linhasParaExcluir[k]);
-      }
-
+    if (linhasCanceladas.length > 0) {
       try {
         UrlFetchApp.fetch(CONFIG_SCRIPT.PUBLIC_FORM_URL + '/api/sincronizar', {
           method: 'post',
@@ -308,7 +290,7 @@ function verificarExpiracao96h() {
       }
     }
 
-    Logger.log('Linhas canceladas (96h) e movidas: ' + JSON.stringify(linhasParaExcluir));
+    Logger.log('Linhas canceladas na mesma aba (96h): ' + JSON.stringify(linhasCanceladas));
   } finally {
     lock.releaseLock();
   }

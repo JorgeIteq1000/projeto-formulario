@@ -9,7 +9,9 @@ import {
   Copy,
   Check,
   FileText,
-  Database
+  Database,
+  Award,
+  Zap
 } from 'lucide-react';
 
 const ROTULO_REDE = { particular: 'Particular', estadual: 'Estadual', municipal: 'Municipal' };
@@ -19,6 +21,11 @@ const formatarData = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
 export default function AdminKanban({ estatisticas, onUpdate }) {
   const [itens, setItens] = useState([]);
   const [integracao, setIntegracao] = useState(estatisticas?.integracao || null);
+  const [certificacaoAutomatica, setCertificacaoAutomatica] = useState(
+    Boolean(estatisticas?.configuracoes?.certificacaoAutomatica)
+  );
+  const [alterandoConfig, setAlterandoConfig] = useState(false);
+  const [emitindoPorToken, setEmitindoPorToken] = useState({});
   const [ipLocal, setIpLocal] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
@@ -34,6 +41,9 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
       if (json.sucesso) {
         setItens(json.dados);
         if (json.integracao) setIntegracao(json.integracao);
+        if (typeof json.configuracoes?.certificacaoAutomatica === 'boolean') {
+          setCertificacaoAutomatica(json.configuracoes.certificacaoAutomatica);
+        }
         if (json.ipLocal) setIpLocal(json.ipLocal);
       }
     } catch (err) {
@@ -62,11 +72,71 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
     }
   };
 
+  const alternarCertificacaoAutomatica = async () => {
+    if (alterandoConfig) return;
+    const novoValor = !certificacaoAutomatica;
+    setAlterandoConfig(true);
+    try {
+      const res = await authFetch('/api/configuracoes', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ certificacaoAutomatica: novoValor })
+      });
+      const json = await res.json();
+      if (json.sucesso) {
+        setCertificacaoAutomatica(Boolean(json.dados?.certificacaoAutomatica));
+        mostrarToast(
+          novoValor
+            ? '⚡ Certificação automática ATIVADA!'
+            : '⏸️ Certificação automática DESATIVADA — emissão manual pelo card.'
+        );
+        onUpdate?.();
+      } else {
+        mostrarToast(json.mensagem || 'Não foi possível alterar a configuração.');
+      }
+    } catch {
+      mostrarToast('Falha ao atualizar o interruptor de certificação automática.');
+    } finally {
+      setAlterandoConfig(false);
+    }
+  };
+
+  const emitirNoLyra = async (item) => {
+    if (emitindoPorToken[item.token]) return;
+    setEmitindoPorToken((prev) => ({ ...prev, [item.token]: true }));
+    try {
+      const res = await authFetch(`/api/solicitacoes/${item.token}/emitir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const json = await res.json();
+      if (json.resposta) {
+        setItens((prev) =>
+          prev.map((it) => (it.token === item.token ? { ...it, resposta: json.resposta } : it))
+        );
+      }
+      if (json.sucesso) {
+        mostrarToast(`🎓 ${json.mensagem || `Certificado emitido para ${item.nome}!`}`);
+        onUpdate?.();
+      } else {
+        mostrarToast(`⚠️ ${json.mensagem || 'Não foi possível concluir a emissão no Lyra.'}`);
+      }
+    } catch {
+      mostrarToast('Falha na comunicação ao tentar emitir no Lyra.');
+    } finally {
+      setEmitindoPorToken((prev) => {
+        const proximo = { ...prev };
+        delete proximo[item.token];
+        return proximo;
+      });
+    }
+  };
+
   useEffect(() => { carregar(); }, []);
 
   const mostrarToast = (msg) => {
     setToast(msg);
-    setTimeout(() => setToast(''), 3500);
+    setTimeout(() => setToast(''), 4000);
   };
 
   const obterLinkCompleto = (item) => {
@@ -121,105 +191,167 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
   const emitir = filtrados.filter((i) => i.status === 'EMITIR');
   const LIMITE = 40;
 
-  const Card = ({ item }) => (
-    <div className={`kanban-card ${item.status === 'EMITIR' ? 'card-completed' : ''}`}>
-      <div className="card-top">
-        <span className="card-cpf font-mono">{item.cpf}</span>
-        <span className={`card-badge ${item.status === 'EMITIR' ? 'badge-success' : 'badge-pending'}`}>
-          {item.status === 'EMITIR' ? 'Respondido' : 'Aguardando aluno'}
-        </span>
-      </div>
-      <h5 className="card-student-name">{item.nome}</h5>
-      <div className="card-courses-summary">
-        <span className="courses-count">
-          {item.cursos.length} {item.cursos.length === 1 ? 'curso' : 'cursos'}
-        </span>
-        <span className="card-course-preview"> • solicitado em {formatarData(item.dataReferencia)}</span>
-      </div>
+  const Card = ({ item }) => {
+    const jaEmitidoLyra = item.resposta?.emitidoNoLyra === true;
+    const aguardandoManual = Boolean(item.resposta?.aguardandoEmissaoManual) && !jaEmitidoLyra;
+    const estaEmitindoEste = Boolean(emitindoPorToken[item.token]);
 
-      {item.resposta && (
-        <div className="card-data-summary">
-          <span>Protocolo: <code>{item.resposta.protocolo}</code></span>
-          {item.resposta.bitrixCardId && (
-            <span style={{ color: '#38bdf8', fontWeight: 600 }}>
-              🔷 Bitrix24 SPA: #{item.resposta.bitrixCardId} ({item.resposta.bitrixStageId || ((item.resposta.temRevisao || item.resposta.periodosSugeridos?.some(p => p.aceite === 'Não Aceito' || p.customizado) || item.resposta.observacao) ? 'DT1046_76:PREPARATION' : 'DT1046_76:CLIENT')})
-            </span>
+    return (
+      <div className={`kanban-card ${item.status === 'EMITIR' ? 'card-completed' : ''}`}>
+        <div className="card-top">
+          <span className="card-cpf font-mono">{item.cpf}</span>
+          {item.status === 'ENTRADA' ? (
+            <span className="card-badge badge-pending">Aguardando aluno</span>
+          ) : jaEmitidoLyra ? (
+            <span className="card-badge badge-success">🎓 Emitido no Lyra</span>
+          ) : aguardandoManual ? (
+            <span className="card-badge badge-awaiting-emit">⏳ Aguardando emissão</span>
+          ) : (
+            <span className="card-badge badge-success">Respondido</span>
           )}
-          <span>
-            Professor:{' '}
-            {item.resposta.professor
-              ? `Sim — ${
-                  item.resposta.rede === 'municipal'
-                    ? item.resposta.prefeituraSP
-                      ? 'Prefeitura de SP'
-                      : 'Municipal (Outro Município)'
-                    : ROTULO_REDE[item.resposta.rede]
-                }`
-              : 'Não'}
+        </div>
+        <h5 className="card-student-name">{item.nome}</h5>
+        <div className="card-courses-summary">
+          <span className="courses-count">
+            {item.cursos.length} {item.cursos.length === 1 ? 'curso' : 'cursos'}
           </span>
-          {item.resposta.dataEvolucao && (
-            <span>Última evolução: {formatarData(item.resposta.dataEvolucao)}</span>
-          )}
-
-          {item.resposta.observacao && (
-            <div className="card-obs-alert">
-              <strong>⚠️ Observação do Aluno:</strong>
-              <span>{item.resposta.observacao}</span>
-            </div>
-          )}
-
-          {item.resposta.resumoCustomizacao && (
-            <div className="card-obs-alert" style={{ borderColor: 'rgba(245, 158, 11, 0.4)', background: 'rgba(245, 158, 11, 0.08)' }}>
-              <strong style={{ color: '#fbbf24' }}>✏️ Revisão de Datas Solicitada:</strong>
-              <span style={{ whiteSpace: 'pre-line', color: '#fde68a' }}>{item.resposta.resumoCustomizacao}</span>
-            </div>
-          )}
-
-          {item.resposta.periodosSugeridos?.length > 0 && (
-            <div style={{ marginTop: 6, fontSize: '0.74rem', background: 'rgba(59, 130, 246, 0.08)', padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(59, 130, 246, 0.2)' }}>
-              <span style={{ fontWeight: 600, color: '#93c5fd', display: 'block', marginBottom: 2 }}>
-                📅 Períodos Sugeridos ({item.resposta.periodosSugeridos.length}):
-              </span>
-              {item.resposta.periodosSugeridos.map((p, idx) => (
-                <div key={idx} style={{ color: p.ultrapassaHoje ? '#f87171' : '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>
-                  <span>• {p.curso}: <strong>{p.dataInicioFormatada} a {p.dataFimFormatada}</strong></span>
-                  {p.ultrapassaHoje ? (
-                    <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.7rem' }}>
-                      [CANCELADO - DATA FUTURA]
-                    </span>
-                  ) : (p.aceite === 'Não Aceito' || p.customizado) ? (
-                    <span style={{ color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)', padding: '1px 6px', borderRadius: 4, fontWeight: 700, fontSize: '0.68rem', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
-                      ✏️ Data Customizada: {p.dataInicioCustomizadaFormatada || p.dataInicioFormatada} a {p.dataFimCustomizadaFormatada || p.dataFimFormatada}
-                    </span>
-                  ) : (
-                    <span style={{ color: '#4ade80', background: 'rgba(34, 197, 94, 0.15)', padding: '1px 6px', borderRadius: 4, fontWeight: 700, fontSize: '0.68rem', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
-                      ✓ Aceito
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          <span className="card-course-preview"> • solicitado em {formatarData(item.dataReferencia)}</span>
         </div>
-      )}
 
-      <div className="card-footer-actions">
-        {item.status === 'ENTRADA' ? (
-          <button type="button" className="btn-card-action" onClick={() => simularWhatsapp(item)}>
-            <Smartphone size={14} /> WhatsApp
-          </button>
-        ) : <span />}
-        <div className="card-actions-right">
-          <button type="button" className="btn-card-action" onClick={() => copiarLink(item)} title="Copiar link">
-            {copiado === item.token ? <Check size={14} /> : <Copy size={14} />}
-          </button>
-          <a className="btn-card-primary" href={`/solicitacoes/${item.token}`} target="_blank" rel="noreferrer">
-            Abrir link <ExternalLink size={14} />
-          </a>
+        {item.resposta && (
+          <div className="card-data-summary">
+            <span>Protocolo: <code>{item.resposta.protocolo}</code></span>
+            {item.resposta.bitrixCardId && (
+              <span style={{ color: '#38bdf8', fontWeight: 600 }}>
+                🔷 Bitrix24 SPA: #{item.resposta.bitrixCardId} ({item.resposta.bitrixStageId || ((item.resposta.temRevisao || item.resposta.periodosSugeridos?.some(p => p.aceite === 'Não Aceito' || p.customizado) || item.resposta.observacao) ? 'DT1046_76:PREPARATION' : 'DT1046_76:CLIENT')})
+              </span>
+            )}
+            {! item.resposta.origemPlanilha && (
+              <span>
+                Professor:{' '}
+                {item.resposta.professor
+                  ? `Sim — ${
+                      item.resposta.rede === 'municipal'
+                        ? item.resposta.prefeituraSP
+                          ? 'Prefeitura de SP'
+                          : 'Municipal (Outro Município)'
+                        : ROTULO_REDE[item.resposta.rede]
+                    }`
+                  : 'Não'}
+              </span>
+            )}
+            {item.resposta.dataEvolucao && (
+              <span>Última evolução: {formatarData(item.resposta.dataEvolucao)}</span>
+            )}
+
+            {item.resposta.observacao && (
+              <div className="card-obs-alert">
+                <strong>⚠️ Observação do Aluno:</strong>
+                <span>{item.resposta.observacao}</span>
+              </div>
+            )}
+
+            {item.resposta.resumoCustomizacao && (
+              <div className="card-obs-alert" style={{ borderColor: 'rgba(245, 158, 11, 0.4)', background: 'rgba(245, 158, 11, 0.08)' }}>
+                <strong style={{ color: '#fbbf24' }}>✏️ Revisão de Datas Solicitada:</strong>
+                <span style={{ whiteSpace: 'pre-line', color: '#fde68a' }}>{item.resposta.resumoCustomizacao}</span>
+              </div>
+            )}
+
+            {item.resposta.periodosSugeridos?.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: '0.74rem', background: 'rgba(59, 130, 246, 0.08)', padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                <span style={{ fontWeight: 600, color: '#93c5fd', display: 'block', marginBottom: 2 }}>
+                  📅 Períodos Sugeridos ({item.resposta.periodosSugeridos.length}):
+                </span>
+                {item.resposta.periodosSugeridos.map((p, idx) => (
+                  <div key={idx} style={{ color: p.ultrapassaHoje ? '#f87171' : '#cbd5e1', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>
+                    <span>• {p.curso}: <strong>{p.dataInicioFormatada} a {p.dataFimFormatada}</strong></span>
+                    {p.ultrapassaHoje ? (
+                      <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.7rem' }}>
+                        [CANCELADO - DATA FUTURA]
+                      </span>
+                    ) : (p.aceite === 'Não Aceito' || p.customizado) ? (
+                      <span style={{ color: '#fbbf24', background: 'rgba(245, 158, 11, 0.15)', padding: '1px 6px', borderRadius: 4, fontWeight: 700, fontSize: '0.68rem', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+                        ✏️ Data Customizada: {p.dataInicioCustomizadaFormatada || p.dataInicioFormatada} a {p.dataFimCustomizadaFormatada || p.dataFimFormatada}
+                      </span>
+                    ) : (
+                      <span style={{ color: '#4ade80', background: 'rgba(34, 197, 94, 0.15)', padding: '1px 6px', borderRadius: 4, fontWeight: 700, fontSize: '0.68rem', border: '1px solid rgba(34, 197, 94, 0.3)' }}>
+                        ✓ Aceito
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {item.resposta.emissaoLyra?.length > 0 && (
+              <div className="lyra-status-box">
+                <span className="lyra-status-title">
+                  🎓 Status Lyra ({item.resposta.emissaoLyra.filter((e) => e.ok).length}/{item.resposta.emissaoLyra.length}):
+                </span>
+                {item.resposta.emissaoLyra.map((em, idx) => (
+                  <div key={idx} className={`lyra-status-row ${em.ok ? 'ok' : 'fail'}`}>
+                    <span>• {em.curso}:</span>
+                    {em.ok ? (
+                      <strong>
+                        Emitido{em.bookRegistry ? ` (Livro ${em.bookRegistry.book}, Reg. ${em.bookRegistry.registry})` : ''}
+                      </strong>
+                    ) : (
+                      <strong>Pendente — {em.message || 'Erro ao emitir'}</strong>
+                    )}
+                  </div>
+                ))}
+                {item.resposta.emitidoEm && (
+                  <div className="lyra-status-meta">
+                    Concluído em {item.resposta.emitidoEm}
+                    {item.resposta.emitidoPor ? ` • ${item.resposta.emitidoPor}` : ''}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="card-footer-actions">
+          {item.status === 'ENTRADA' ? (
+            <button type="button" className="btn-card-action" onClick={() => simularWhatsapp(item)}>
+              <Smartphone size={14} /> WhatsApp
+            </button>
+          ) : jaEmitidoLyra ? (
+            <span className="badge-emitted-pill" title="Certificado já aprovado e emitido no Lyra">
+              <Check size={13} /> Emitido
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn-card-emitir"
+              onClick={() => emitirNoLyra(item)}
+              disabled={estaEmitindoEste}
+              title="Aprovar e emitir certificado no Lyra com os dados preenchidos pelo aluno"
+            >
+              {estaEmitindoEste ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" /> Emitindo...
+                </>
+              ) : (
+                <>
+                  <Award size={14} /> Emitir
+                </>
+              )}
+            </button>
+          )}
+          <div className="card-actions-right">
+            <button type="button" className="btn-card-action" onClick={() => copiarLink(item)} title="Copiar link">
+              {copiado === item.token ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+            <a className="btn-card-primary" href={`/solicitacoes/${item.token}`} target="_blank" rel="noreferrer">
+              Abrir link <ExternalLink size={14} />
+            </a>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="admin-kanban-container">
@@ -247,7 +379,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
           </div>
           <h2 className="admin-title">Links individuais por aluno</h2>
           <p className="admin-sub">
-            Cada aluno recebe um único link com as solicitações das últimas 24h. Ao responder, o card avança de
+            Cada aluno recebe um único link com as solicitações da janela de 96h. Ao responder, o card avança de
             ENTRADA para EMITIR.
           </p>
         </div>
@@ -292,6 +424,53 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
           />
+        </div>
+
+        <div
+          className={`auto-cert-toggle-card ${certificacaoAutomatica ? 'is-active' : 'is-manual'}`}
+          onClick={alternarCertificacaoAutomatica}
+          role="switch"
+          aria-checked={certificacaoAutomatica}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              alternarCertificacaoAutomatica();
+            }
+          }}
+          title={
+            certificacaoAutomatica
+              ? 'Ativo: alunos preenchem o formulário e o certificado é emitido automaticamente no Lyra'
+              : 'Desativado: é necessário clicar em "Emitir" no card do aluno na coluna EMITIR'
+          }
+        >
+          <div className="auto-cert-info">
+            <div className="auto-cert-title-row">
+              <Zap size={15} className={certificacaoAutomatica ? 'icon-zap-on' : 'icon-zap-off'} />
+              <span className="auto-cert-label">Certificação Automática</span>
+              <span className={`auto-cert-pill ${certificacaoAutomatica ? 'pill-on' : 'pill-off'}`}>
+                {certificacaoAutomatica ? 'ATIVA' : 'DESATIVADA'}
+              </span>
+            </div>
+            <span className="auto-cert-desc">
+              {certificacaoAutomatica
+                ? 'Emite automaticamente no Lyra ao enviar o formulário'
+                : 'Requer clicar em "Emitir" no card da coluna EMITIR'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className={`toggle-switch-btn ${certificacaoAutomatica ? 'on' : 'off'}`}
+            disabled={alterandoConfig}
+            aria-label="Alternar certificação automática"
+            onClick={(e) => {
+              e.stopPropagation();
+              alternarCertificacaoAutomatica();
+            }}
+          >
+            <span className="toggle-switch-thumb" />
+          </button>
         </div>
       </div>
 

@@ -12,11 +12,13 @@ import {
   carregarSolicitacoes,
   carregarSolicitacoesCanceladas,
   registrarRespostaNoSheet,
+  atualizarStatusLyraNoSheet,
   inicializarGoogleAuth,
   gravarLinksNaPlanilha
 } from './services/googleSheets.js';
 import { criarCardAlunoSPA } from './services/bitrix24.js';
 import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
+import { carregarConfiguracoes, salvarConfiguracoes } from './services/configStore.js';
 import { tipoCursoNoEscopo } from './services/escopo.js';
 import { buscarCargaHoraria } from './services/cargaHoraria.js';
 import { cancelarSolicitacaoLyra, emitirCertificadoLyra } from './services/lyra.js';
@@ -106,6 +108,13 @@ const RESPOSTAS_FILE = process.env.RESPOSTAS_FILE
     ? path.join(os.tmpdir(), 'respostas.json')
     : path.join(__dirname, 'data', 'respostas.json'));
 
+// Arquivo onde ficam salvas as configurações operacionais do painel (ex: interruptor de certificação automática)
+const CONFIG_FILE = process.env.CONFIG_FILE
+  ? path.resolve(process.env.CONFIG_FILE)
+  : (process.env.VERCEL
+    ? path.join(os.tmpdir(), 'config.json')
+    : path.join(__dirname, 'data', 'config.json'));
+
 const REDES_VALIDAS = ['particular', 'estadual', 'municipal'];
 
 const app = express();
@@ -169,9 +178,75 @@ function gerarToken(cpf, dataReferencia) {
 const links = new Map();
 const tokensCancelados = new Map();
 const respostas = carregarRespostas(RESPOSTAS_FILE);
+let configuracoesPainel = carregarConfiguracoes(CONFIG_FILE);
 // Tokens com envio em andamento: impede dois envios simultâneos (duplo clique) de criar dois cards
 const enviosEmAndamento = new Set();
+// Tokens com emissão manual no Lyra em andamento: impede duplo clique no botão "Emitir"
+const emissoesEmAndamento = new Set();
 if (respostas.size) console.log(`💾 ${respostas.size} resposta(s) restaurada(s) de ${RESPOSTAS_FILE}.`);
+console.log(`⚙️  Certificação automática no Lyra: ${configuracoesPainel.certificacaoAutomatica ? 'ATIVADA' : 'DESATIVADA (emissão manual pelo painel)'}`);
+
+async function executarEmissaoCursosLyra({ link, cursosParaCertificar = [], jaEmitidos = [] }) {
+  const resultados = [];
+  let emitidosAgora = 0;
+
+  for (const c of cursosParaCertificar) {
+    const chaveCurso = String(c.contrato || c.curso || '').trim().toLowerCase();
+    const previoOk = Array.isArray(jaEmitidos)
+      ? jaEmitidos.find(
+          (item) => item?.ok && String(item.contrato || item.curso || '').trim().toLowerCase() === chaveCurso
+        )
+      : null;
+
+    if (previoOk) {
+      resultados.push(previoOk);
+      continue;
+    }
+
+    const dataInicio = c.dataInicioCustomizada || c.dataInicio || c.dataInicioISO || null;
+    const dataFim = c.dataFimCustomizada || c.dataFim || c.dataFimISO || null;
+    try {
+      const resLyra = await emitirCertificadoLyra({
+        cpf: link.cpf,
+        nome: link.nome,
+        curso: c.curso,
+        contrato: c.contrato,
+        dataInicio,
+        dataFim,
+      });
+      resultados.push({
+        curso: c.curso,
+        contrato: c.contrato || null,
+        ok: Boolean(resLyra.ok),
+        notFound: Boolean(resLyra.notFound),
+        solicitationId: resLyra.solicitationId || null,
+        certificateId: resLyra.certificateId || null,
+        bookRegistry: resLyra.bookRegistry || null,
+        startDate: resLyra.startDate || null,
+        endDate: resLyra.endDate || null,
+        message: resLyra.message || null,
+      });
+      if (resLyra.ok) {
+        emitidosAgora += 1;
+        console.log(`🎓 [LYRA] Certificado emitido para ${link.nome} | ${c.curso} | ID: ${resLyra.solicitationId} | Cert: ${resLyra.certificateId || 'N/A'}`);
+      } else {
+        console.warn(`⚠️  [LYRA] Não foi possível emitir ${c.curso} (${link.nome}): ${resLyra.message}`);
+      }
+    } catch (err) {
+      console.error(`❌ [LYRA] Erro ao emitir ${c.curso} (${link.nome}):`, err.message);
+      resultados.push({
+        curso: c.curso,
+        contrato: c.contrato || null,
+        ok: false,
+        message: err.message,
+      });
+    }
+  }
+
+  const falhas = resultados.filter((e) => !e.ok);
+  const todosEmitidos = cursosParaCertificar.length > 0 && falhas.length === 0;
+  return { resultados, falhas, todosEmitidos, emitidosAgora };
+}
 let totalSolicitacoes = 0;
 let ultimaSincronizacaoMs = 0;
 let statusIntegracao = {
@@ -242,6 +317,26 @@ async function carregarBase() {
 
     const dataReferencia = maisRecente.toISOString().slice(0, 10);
     const token = gerarToken(cpf, dataReferencia);
+
+    // Se todas as linhas do aluno na aba principal estiverem marcadas como "Cancelado" (Coluna I ou V),
+    // mantém na planilha sem exibir no Kanban e bloqueia o link como cancelado (96h).
+    const ehCanceladoPlanilha = (i) => {
+      const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+      const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+      return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
+    };
+    if (itens.every(ehCanceladoPlanilha) && !respostas.has(token)) {
+      if (!tokensCancelados.has(token)) {
+        tokensCancelados.set(token, {
+          token,
+          cpf,
+          nome: itens[0].nome || 'Aluno(a)',
+          dataCancelamento: primeiroPreenchido('modificacaoStatus') || '',
+          motivo: 'Prazo de 96 horas expirado'
+        });
+      }
+      continue;
+    }
 
     const statusOriginalPlanilha = itens.some((i) =>
       String(i.statusOriginal || '').trim().toUpperCase() === 'EMITIR' ||
@@ -534,47 +629,24 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     ? listaPeriodos.filter((p) => !p.ultrapassaHoje && !p.cancelado)
     : (link.cursos || []);
 
-  // Emissão automática no Lyra com as datas aprovadas para cada curso
+  // Emissão no Lyra condicionada ao interruptor de Certificação Automática do painel
   registro.emissaoLyra = [];
-  if (SHEET_SOMENTE_LEITURA) {
+  registro.emitidoNoLyra = false;
+  registro.emissaoModo = configuracoesPainel.certificacaoAutomatica ? 'AUTOMATICA' : 'MANUAL';
+  registro.aguardandoEmissaoManual = cursosParaCertificar.length > 0;
+
+  if (!configuracoesPainel.certificacaoAutomatica) {
+    console.log(`⏸️  [LYRA] Certificação automática DESATIVADA no painel: ${link.nome} aguarda clique em "Emitir" na coluna EMITIR.`);
+  } else if (SHEET_SOMENTE_LEITURA) {
     console.log('ℹ️  Planilha em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): emissão automática no Lyra não executada.');
-  } else if (process.env.LYRA_EMAIL && process.env.LYRA_PASSWORD) {
-    for (const c of cursosParaCertificar) {
-      const dataInicio = c.dataInicioCustomizada || c.dataInicio || c.dataInicioISO || null;
-      const dataFim = c.dataFimCustomizada || c.dataFim || c.dataFimISO || null;
-      try {
-        const resLyra = await emitirCertificadoLyra({
-          cpf: link.cpf,
-          nome: link.nome,
-          curso: c.curso,
-          contrato: c.contrato,
-          dataInicio,
-          dataFim,
-        });
-        registro.emissaoLyra.push({
-          curso: c.curso,
-          ok: Boolean(resLyra.ok),
-          notFound: Boolean(resLyra.notFound),
-          solicitationId: resLyra.solicitationId || null,
-          certificateId: resLyra.certificateId || null,
-          bookRegistry: resLyra.bookRegistry || null,
-          startDate: resLyra.startDate || null,
-          endDate: resLyra.endDate || null,
-          message: resLyra.message || null,
-        });
-        if (resLyra.ok) {
-          console.log(`🎓 [LYRA] Certificado emitido para ${link.nome} | ${c.curso} | ID: ${resLyra.solicitationId} | Cert: ${resLyra.certificateId || 'N/A'}`);
-        } else {
-          console.warn(`⚠️  [LYRA] Não foi possível emitir ${c.curso} (${link.nome}): ${resLyra.message}`);
-        }
-      } catch (err) {
-        console.error(`❌ [LYRA] Erro ao emitir ${c.curso} (${link.nome}):`, err.message);
-        registro.emissaoLyra.push({
-          curso: c.curso,
-          ok: false,
-          message: err.message,
-        });
-      }
+  } else if (process.env.LYRA_EMAIL && process.env.LYRA_PASSWORD && cursosParaCertificar.length > 0) {
+    const execLyra = await executarEmissaoCursosLyra({ link, cursosParaCertificar });
+    registro.emissaoLyra = execLyra.resultados;
+    registro.emitidoNoLyra = execLyra.todosEmitidos;
+    registro.aguardandoEmissaoManual = !execLyra.todosEmitidos;
+    if (execLyra.todosEmitidos) {
+      registro.emitidoEm = registro.dataSubmissaoFormatada;
+      registro.emitidoPor = 'Automático (Formulário)';
     }
   }
 
@@ -748,10 +820,56 @@ app.get('/api/estatisticas', middlewareAutenticacaoAdmin, (req, res) => {
       totalLinks: links.size,
       totalRespondidos: respondidos,
       totalPendentes: Math.max(0, links.size - respondidos),
-      integracao: statusIntegracao
+      integracao: statusIntegracao,
+      configuracoes: configuracoesPainel
     }
   });
 });
+
+// Consulta e atualização das configurações do painel (ex: interruptor de certificação automática)
+app.get('/api/configuracoes', middlewareAutenticacaoAdmin, (req, res) => {
+  return res.json({
+    sucesso: true,
+    dados: configuracoesPainel
+  });
+});
+
+const atualizarConfiguracoesHandler = (req, res) => {
+  const { certificacaoAutomatica } = req.body || {};
+  if (typeof certificacaoAutomatica !== 'boolean') {
+    return res.status(400).json({
+      sucesso: false,
+      mensagem: 'O campo "certificacaoAutomatica" deve ser booleano (true ou false).'
+    });
+  }
+
+  const operador = req.usuario?.nome || req.usuario?.login || 'Painel Administrativo';
+  configuracoesPainel = {
+    ...configuracoesPainel,
+    certificacaoAutomatica,
+    atualizadoEm: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+    atualizadoPor: operador
+  };
+
+  try {
+    salvarConfiguracoes(CONFIG_FILE, configuracoesPainel);
+  } catch (err) {
+    console.error(`❌ Erro ao salvar configurações em ${CONFIG_FILE}: ${err.message}`);
+  }
+
+  console.log(`⚙️  [CONFIG PAINEL] Certificação automática ${certificacaoAutomatica ? 'ATIVADA' : 'DESATIVADA'} por ${operador}.`);
+
+  return res.json({
+    sucesso: true,
+    dados: configuracoesPainel,
+    mensagem: certificacaoAutomatica
+      ? 'Certificação automática ativada! Novos formulários preenchidos serão emitidos automaticamente no Lyra.'
+      : 'Certificação automática desativada! Novos formulários preenchidos aguardarão clique em "Emitir" no card.'
+  });
+};
+
+app.put('/api/configuracoes', middlewareAutenticacaoAdmin, atualizarConfiguracoesHandler);
+app.post('/api/configuracoes', middlewareAutenticacaoAdmin, atualizarConfiguracoesHandler);
 
 // Sincroniza a base (recarrega do Google Sheets ou base local)
 app.all('/api/sincronizar', middlewareAutenticacaoAdmin, async (req, res) => {
@@ -869,9 +987,149 @@ app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
     sucesso: true,
     total: dados.length,
     integracao: statusIntegracao,
+    configuracoes: configuracoesPainel,
     ipLocal,
     dados
   });
+});
+
+// Emissão manual no Lyra acionada pelo botão "Emitir" no card do aluno na coluna EMITIR
+app.post('/api/solicitacoes/:token/emitir', middlewareAutenticacaoAdmin, async (req, res) => {
+  const token = req.params.token;
+  let link = links.get(token);
+  if (!link) {
+    await sincronizarSeNecessario();
+    link = links.get(token);
+  }
+  if (!link) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Solicitação não encontrada.' });
+  }
+
+  const registroAtual = respostas.get(token);
+  if (!registroAtual && link.statusPlanilha !== 'EMITIR') {
+    return res.status(400).json({
+      sucesso: false,
+      mensagem: 'Este aluno ainda não preencheu o formulário de confirmação.'
+    });
+  }
+
+  if (registroAtual?.emitidoNoLyra === true) {
+    return res.status(409).json({
+      sucesso: false,
+      mensagem: 'Os certificados deste aluno já foram emitidos no Lyra.'
+    });
+  }
+
+  if (emissoesEmAndamento.has(token)) {
+    return res.status(409).json({
+      sucesso: false,
+      mensagem: 'A emissão deste aluno já está em andamento. Aguarde alguns instantes.'
+    });
+  }
+
+  if (SHEET_SOMENTE_LEITURA) {
+    return res.status(400).json({
+      sucesso: false,
+      mensagem: 'Ambiente em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): emissão no Lyra bloqueada.'
+    });
+  }
+
+  if (!process.env.LYRA_EMAIL || !process.env.LYRA_PASSWORD) {
+    return res.status(400).json({
+      sucesso: false,
+      mensagem: 'Credenciais do Lyra (LYRA_EMAIL / LYRA_PASSWORD) não estão configuradas no servidor.'
+    });
+  }
+
+  const listaPeriodos = Array.isArray(registroAtual?.periodosSugeridos) ? registroAtual.periodosSugeridos : [];
+  const cursosParaCertificar = listaPeriodos.length > 0
+    ? listaPeriodos.filter((p) => !p.ultrapassaHoje && !p.cancelado)
+    : (link.cursos || []);
+
+  if (cursosParaCertificar.length === 0) {
+    return res.status(400).json({
+      sucesso: false,
+      mensagem: 'Nenhum curso elegível para emissão (cursos cancelados por data futura ou lista vazia).'
+    });
+  }
+
+  emissoesEmAndamento.add(token);
+  res.on('close', () => emissoesEmAndamento.delete(token));
+
+  try {
+    const execLyra = await executarEmissaoCursosLyra({
+      link,
+      cursosParaCertificar,
+      jaEmitidos: registroAtual?.emissaoLyra || []
+    });
+
+    const agoraFormatado = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    const operador = req.usuario?.nome || req.usuario?.login || 'Painel Administrativo';
+
+    const baseRegistro = registroAtual || {
+      protocolo: link.protocoloPlanilha || 'EMITIR',
+      dataSubmissao: new Date().toISOString(),
+      dataSubmissaoFormatada: link.inseridoPlanilhaEm || agoraFormatado,
+      statusBitrix: 'EMITIR',
+      origemPlanilha: true
+    };
+
+    const registroAtualizado = {
+      ...baseRegistro,
+      emissaoLyra: execLyra.resultados,
+      emitidoNoLyra: execLyra.todosEmitidos,
+      aguardandoEmissaoManual: !execLyra.todosEmitidos,
+      ...(execLyra.todosEmitidos
+        ? { emitidoEm: agoraFormatado, emitidoPor: operador }
+        : {})
+    };
+
+    respostas.set(token, registroAtualizado);
+    try {
+      salvarRespostas(RESPOSTAS_FILE, respostas);
+    } catch (err) {
+      console.error(`❌ Erro ao salvar resposta após emissão manual (${RESPOSTAS_FILE}): ${err.message}`);
+    }
+
+    if (execLyra.todosEmitidos && GOOGLE_SHEET_ID && !SHEET_SOMENTE_LEITURA) {
+      try {
+        await atualizarStatusLyraNoSheet({
+          spreadsheetId: GOOGLE_SHEET_ID,
+          cpf: link.cpf,
+          statusLyra: 'Aprovado',
+          dataModificacao: agoraFormatado
+        });
+      } catch (err) {
+        console.warn(`⚠️  Não foi possível atualizar colunas V/W no Google Sheets após emissão manual: ${err.message}`);
+      }
+    }
+
+    if (!execLyra.todosEmitidos) {
+      const msgFalha = execLyra.falhas.map((f) => `${f.curso}: ${f.message || 'Falha no Lyra'}`).join(' | ');
+      return res.status(200).json({
+        sucesso: false,
+        parcial: execLyra.emitidosAgora > 0,
+        mensagem: `Não foi possível concluir todos os cursos no Lyra (${msgFalha}).`,
+        emissaoLyra: execLyra.resultados,
+        resposta: registroAtualizado
+      });
+    }
+
+    return res.json({
+      sucesso: true,
+      mensagem: `Certificado(s) de ${link.nome} emitido(s) com sucesso no Lyra!`,
+      emissaoLyra: execLyra.resultados,
+      resposta: registroAtualizado
+    });
+  } catch (err) {
+    console.error(`❌ Erro inesperado na emissão manual de ${link.nome}:`, err);
+    return res.status(500).json({
+      sucesso: false,
+      mensagem: `Erro ao emitir no Lyra: ${err.message}`
+    });
+  } finally {
+    emissoesEmAndamento.delete(token);
+  }
 });
 
 // Disparo WhatsApp via Zionic com IA (com suporte a fallback simulado)

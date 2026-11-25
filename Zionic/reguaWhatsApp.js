@@ -185,15 +185,23 @@ export async function executarReguaWhatsApp({
     const telefone = itens.find((i) => i.telefone)?.telefone || '';
     const cursos = [...new Set(itens.map((i) => i.curso).filter(Boolean))];
 
-    // Verifica se já foi emitido (ou se já possui protocolo)
-    const jaEmitido = itens.some((i) =>
-      String(i.statusOriginal || '').trim().toUpperCase() === 'EMITIR' ||
-      String(i.protocolo || '').trim().length > 0
-    );
+    // Verifica se já foi emitido (ou se já possui protocolo) ou cancelado na planilha
+    const jaEmitidoOuCancelado = itens.some((i) => {
+      const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+      const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+      return (
+        stForm === 'EMITIR' ||
+        stForm === 'CANCELADO' ||
+        stForm === 'CANCELADO_96H' ||
+        stLyra === 'CANCELADO' ||
+        stLyra === 'APROVADO' ||
+        String(i.protocolo || '').trim().length > 0
+      );
+    });
 
-    if (jaEmitido) {
+    if (jaEmitidoOuCancelado) {
       relatorio.jaEmitidos++;
-      relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_JA_EMITIDO' });
+      relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_JA_EMITIDO_OU_CANCELADO' });
       continue;
     }
 

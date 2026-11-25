@@ -61,3 +61,15 @@
     - [`listador-cron.yml`](file:///d:/projeto-formulario/.github/workflows/listador-cron.yml): Executa exclusivamente o Listador Python a cada 20 minutos.
     - [`whatsapp-regua-cron.yml`](file:///d:/projeto-formulario/.github/workflows/whatsapp-regua-cron.yml): Executa a Régua de WhatsApp a cada 1 hora com seletor de "envio_real" vs "simulação" e trava de segurança se faltarem credenciais Zionic.
   - Criada suíte de testes unitários [`tests/regua_whatsapp.test.js`](file:///d:/projeto-formulario/tests/regua_whatsapp.test.js) com 100% de aprovação.
+
+- [x] **Tarefa 11: Interruptor de Certificação Automática no Painel & Botão "Emitir" Manual por Card**
+  - Criada persistência atômica da configuração operacional em [`services/configStore.js`](file:///d:/projeto-formulario/services/configStore.js) (`data/config.json`) com padrão inicial seguro (`certificacaoAutomatica = false`).
+  - Adicionados endpoints autenticados `GET/PUT /api/configuracoes` e `POST /api/solicitacoes/:token/emitir` em [`server.js`](file:///d:/projeto-formulario/server.js) com trava anti-duplo clique e idempotência por curso no Lyra.
+  - Adicionado interruptor visual ("Certificação Automática") e botão `"Emitir"` nos cards da coluna `EMITIR` em [`src/components/AdminKanban.jsx`](file:///d:/projeto-formulario/src/components/AdminKanban.jsx) + estilos em [`src/styles.css`](file:///d:/projeto-formulario/src/styles.css).
+  - Criada suíte de testes ponta a ponta [`tests/certificacao_automatica_toggle.test.js`](file:///d:/projeto-formulario/tests/certificacao_automatica_toggle.test.js).
+
+- [x] **Tarefa 12: Listador Python & Planilha com Colunas V (Status Lyra), W (Modificação do Status) e X (Prazo Mínimo) + Cancelamento na Mesma Aba**
+  - Atualizado [`LISTADOR/listador-extensoes-aperf.py`](file:///d:/projeto-formulario/LISTADOR/listador-extensoes-aperf.py) para capturar e traduzir o status da solicitação no Lyra na Coluna V (`STATUS LYRA`), manter a Coluna W (`MODIFICAÇÃO DO STATUS`) e gravar o prazo mínimo para conclusão do curso na Coluna X (`PRAZO MÍNIMO PARA CONCLUSÃO`), além de atualizar linhas existentes.
+  - Atualizado [`scripts/googleAppsScript.gs`](file:///d:/projeto-formulario/scripts/googleAppsScript.gs) (`verificarExpiracao96h`) para **não arrastar/mover** linhas expiradas para outra aba, marcando `"Cancelado"` nas colunas I e V e a data/hora na coluna W.
+  - Atualizados [`services/googleSheets.js`](file:///d:/projeto-formulario/services/googleSheets.js), [`server.js`](file:///d:/projeto-formulario/server.js) e [`Zionic/reguaWhatsApp.js`](file:///d:/projeto-formulario/Zionic/reguaWhatsApp.js) para gravar a data de modificação na Coluna W no preenchimento/emissão, reconhecer `"Cancelado"` na mesma aba e reservar V/W/X.
+  - Criada suíte de testes [`tests/colunas_vwx_sheets.test.js`](file:///d:/projeto-formulario/tests/colunas_vwx_sheets.test.js).

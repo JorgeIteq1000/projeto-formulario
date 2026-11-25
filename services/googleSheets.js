@@ -230,39 +230,49 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
       
       const res = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${nomeAba}'!A1:Z`
+        range: `'${nomeAba}'!A1:AD`
       });
 
       const rows = res.data.values || [];
       if (rows.length > 1) {
         const headers = rows[0].map(h => (h || '').toString().trim().toUpperCase());
+        const headersSemAcento = headers.map(semAcento);
         
         // Mapeia índices dinamicamente
-        const idxSolicitacao = headers.findIndex(h => h.includes('SOLICITA'));
+        const idxSolicitacao = headersSemAcento.findIndex(h => h.includes('SOLICITA'));
+        const idxStatusForm = headersSemAcento.findIndex(
+          h => h === 'STATUS DO FORMULARIO' || h === 'STATUS DO EVENTO'
+        );
+        const idxStatusFallback = headersSemAcento.findIndex(
+          h => h.includes('STATUS') && !h.includes('LYRA') && !h.includes('MODIFICACAO') && !h.includes('WHATSAPP')
+        );
         const idx = {
           solicitacao: idxSolicitacao !== -1
             ? idxSolicitacao
-            : headers.findIndex(h => h.includes('DATA') && !h.includes('NASC')),
-          cpf: headers.findIndex(h => h === 'CPF'),
-          nome: headers.findIndex(h => h === 'NOME'),
-          tipoCertificado: headers.findIndex(h => h.includes('TIPO') && h.includes('CERT')),
-          tipoCurso: headers.findIndex(h => h.includes('TIPO') && h.includes('CURSO')),
-          curso: headers.findIndex(h => h === 'CURSO'),
-          certificadora: headers.findIndex(h => h.includes('CERTIFICADORA') || h.includes('FACULDADE')),
-          contrato: headers.findIndex(h => h.includes('CONTRATO') || h.includes('MATRICULA')),
-          status: headers.findIndex(h => h.includes('STATUS')),
-          telefone: headers.findIndex(h => h.includes('TELEFONE') || h.includes('WHATSAPP') || h.includes('CELULAR')),
-          dataNascimento: headers.findIndex(h => h.includes('NASCIMENTO')),
-          rg: headers.findIndex(h => h === 'RG' || h.startsWith('RG ') || h.includes('RG')),
-          naturalidade: headers.findIndex(h => h.includes('NATURALIDADE') || h.includes('NACIONALIDADE')),
-          cargaHoraria: headers.findIndex(h => h.includes('CARGA')),
-          protocolo: headers.findIndex(h => h.includes('PROTOCOLO')),
-          token: headers.findIndex(h => h === 'TOKEN'),
-          link: headers.findIndex(h => h === 'LINK' || h.includes('FORMULARIO')),
-          dataInsercao: headers.findIndex(h => h.includes('INSERID') || h.includes('DATA INSER')),
-          statusWhatsApp: headers.findIndex(h => h.includes('STATUS WHATSAPP') || h === 'WHATSAPP_STATUS' || h.includes('STATUS ZIONIC')),
-          dataUltimoWhatsApp: headers.findIndex(h => h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA' || h.includes('DATA WHATSAPP')),
-          totalLembretesWhatsApp: headers.findIndex(h => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT')
+            : headersSemAcento.findIndex(h => h.includes('DATA') && !h.includes('NASC') && !h.includes('MODIFICACAO')),
+          cpf: headersSemAcento.findIndex(h => h === 'CPF'),
+          nome: headersSemAcento.findIndex(h => h === 'NOME'),
+          tipoCertificado: headersSemAcento.findIndex(h => h.includes('TIPO') && h.includes('CERT')),
+          tipoCurso: headersSemAcento.findIndex(h => h.includes('TIPO') && h.includes('CURSO')),
+          curso: headersSemAcento.findIndex(h => h === 'CURSO'),
+          certificadora: headersSemAcento.findIndex(h => h.includes('CERTIFICADORA') || h.includes('FACULDADE')),
+          contrato: headersSemAcento.findIndex(h => h.includes('CONTRATO') || h.includes('MATRICULA')),
+          status: idxStatusForm !== -1 ? idxStatusForm : idxStatusFallback,
+          telefone: headersSemAcento.findIndex(h => h.includes('TELEFONE') || h.includes('WHATSAPP') || h.includes('CELULAR')),
+          dataNascimento: headersSemAcento.findIndex(h => h.includes('NASCIMENTO')),
+          rg: headersSemAcento.findIndex(h => h === 'RG' || h.startsWith('RG ') || h.includes('RG')),
+          naturalidade: headersSemAcento.findIndex(h => h.includes('NATURALIDADE') || h.includes('NACIONALIDADE')),
+          cargaHoraria: headersSemAcento.findIndex(h => h.includes('CARGA')),
+          protocolo: headersSemAcento.findIndex(h => h.includes('PROTOCOLO')),
+          token: headersSemAcento.findIndex(h => h === 'TOKEN'),
+          link: headersSemAcento.findIndex(h => h === 'LINK' || h.includes('FORMULARIO')),
+          dataInsercao: headersSemAcento.findIndex(h => h.includes('INSERID') || h.includes('DATA INSER')),
+          statusLyra: headersSemAcento.findIndex(h => h.includes('STATUS LYRA')),
+          modificacaoStatus: headersSemAcento.findIndex(h => h.includes('MODIFICACAO DO STATUS')),
+          prazoMinimoConclusao: headersSemAcento.findIndex(h => h.includes('PRAZO MINIMO')),
+          statusWhatsApp: headersSemAcento.findIndex(h => h.includes('STATUS WHATSAPP') || h === 'WHATSAPP_STATUS' || h.includes('STATUS ZIONIC')),
+          dataUltimoWhatsApp: headersSemAcento.findIndex(h => h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA' || h.includes('DATA WHATSAPP')),
+          totalLembretesWhatsApp: headersSemAcento.findIndex(h => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT')
         };
 
         const solicitacoes = [];
@@ -292,6 +302,10 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             // Coluna U ("Inserido na Planilha em")
             dataInsercao: String((idx.dataInsercao !== -1 ? r[idx.dataInsercao] : r[20]) || '').trim(),
             statusOriginal: idx.status !== -1 ? r[idx.status] : '',
+            // Coluna V ("STATUS LYRA"), W ("MODIFICAÇÃO DO STATUS"), X ("PRAZO MÍNIMO PARA CONCLUSÃO")
+            statusLyra: String((idx.statusLyra !== -1 ? r[idx.statusLyra] : r[21]) || '').trim(),
+            modificacaoStatus: String((idx.modificacaoStatus !== -1 ? r[idx.modificacaoStatus] : r[22]) || '').trim(),
+            prazoMinimoConclusao: String((idx.prazoMinimoConclusao !== -1 ? r[idx.prazoMinimoConclusao] : r[23]) || '').trim(),
             statusWhatsApp: idx.statusWhatsApp !== -1 ? String(r[idx.statusWhatsApp] || '').trim() : '',
             dataUltimoWhatsApp: idx.dataUltimoWhatsApp !== -1 ? String(r[idx.dataUltimoWhatsApp] || '').trim() : '',
             totalLembretesWhatsApp: idx.totalLembretesWhatsApp !== -1 ? (Number(r[idx.totalLembretesWhatsApp]) || 0) : 0
@@ -370,10 +384,16 @@ export async function registrarRespostaNoSheet({
     });
     const headers = (headerRes.data.values && headerRes.data.values[0]) || [];
 
-    // Localiza colunas de CPF, STATUS DO EVENTO e PROTOCOLO
-    const colCpfIdx = headers.findIndex(h => semAcento(h) === 'CPF');
-    const colStatusIdx = headers.findIndex(h => semAcento(h).includes('STATUS'));
-    let colProtocoloIdx = headers.findIndex(h => semAcento(h).includes('PROTOCOLO'));
+    // Localiza colunas de CPF, STATUS DO FORMULÁRIO/EVENTO, PROTOCOLO, STATUS LYRA e MODIFICAÇÃO DO STATUS
+    const headersNorm = headers.map(h => semAcento(h));
+    const colCpfIdx = headersNorm.findIndex(h => h === 'CPF');
+    const colStatusFormIdx = headersNorm.findIndex(h => h === 'STATUS DO FORMULARIO' || h === 'STATUS DO EVENTO');
+    const colStatusIdx = colStatusFormIdx !== -1
+      ? colStatusFormIdx
+      : headersNorm.findIndex(h => h.includes('STATUS') && !h.includes('LYRA') && !h.includes('MODIFICACAO') && !h.includes('WHATSAPP'));
+    let colProtocoloIdx = headersNorm.findIndex(h => h.includes('PROTOCOLO'));
+    const colStatusLyraIdx = headersNorm.findIndex(h => h.includes('STATUS LYRA'));
+    const colModStatusIdx = headersNorm.findIndex(h => h.includes('MODIFICACAO DO STATUS'));
 
     if (colCpfIdx === -1) {
       return { atualizado: false, motivo: 'Coluna CPF não encontrada' };
@@ -381,13 +401,14 @@ export async function registrarRespostaNoSheet({
 
     const rowsRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${nomeAba}'!A:Z`
+      range: `'${nomeAba}'!A:AD`
     });
     const rows = rowsRes.data.values || [];
 
     const cpfRawLink = String(linkInfo?.cpf || '').replace(/\D/g, '');
     const cpfBuscado = cpfRawLink ? cpfRawLink.padStart(11, '0') : '';
     const protocoloValor = resposta?.protocolo || '';
+    const dataModificacaoValor = resposta?.dataSubmissaoFormatada || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     const updates = [];
     let linhasAfetadas = 0;
 
@@ -408,7 +429,7 @@ export async function registrarRespostaNoSheet({
         const numLinha = i + 1;
         linhasAfetadas++;
 
-        // Atualiza a coluna de status (ex: I = STATUS DO EVENTO)
+        // Atualiza a coluna de status do formulário (I = STATUS DO FORMULÁRIO)
         if (colStatusIdx !== -1) {
           const letraColStatus = idxParaColunaA1(colStatusIdx);
           updates.push({
@@ -417,12 +438,30 @@ export async function registrarRespostaNoSheet({
           });
         }
 
-        // Grava o número de protocolo na coluna Protocolo (ex: S = Protocolo) em todas as linhas do aluno
+        // Grava o número de protocolo na coluna Protocolo (S = Protocolo) em todas as linhas do aluno
         if (colProtocoloIdx !== -1 && protocoloValor) {
           const letraColProto = idxParaColunaA1(colProtocoloIdx);
           updates.push({
             range: `'${nomeAba}'!${letraColProto}${numLinha}`,
             values: [[protocoloValor]]
+          });
+        }
+
+        // Grava a data de modificação do status na Coluna W (MODIFICAÇÃO DO STATUS)
+        if (colModStatusIdx !== -1) {
+          const letraColMod = idxParaColunaA1(colModStatusIdx);
+          updates.push({
+            range: `'${nomeAba}'!${letraColMod}${numLinha}`,
+            values: [[dataModificacaoValor]]
+          });
+        }
+
+        // Se já foi emitido automaticamente no Lyra, espelha "Aprovado" na Coluna V (STATUS LYRA)
+        if (colStatusLyraIdx !== -1 && resposta?.emitidoNoLyra === true) {
+          const letraColLyra = idxParaColunaA1(colStatusLyraIdx);
+          updates.push({
+            range: `'${nomeAba}'!${letraColLyra}${numLinha}`,
+            values: [['Aprovado']]
           });
         }
       }
@@ -664,7 +703,7 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     const nomeAba = await descobrirNomeAba(sheets, spreadsheetId);
     const rowsRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${nomeAba}'!A1:Z`
+      range: `'${nomeAba}'!A1:AD`
     });
     const rows = rowsRes.data.values || [];
     if (!rows.length) return { sucesso: false, motivo: 'Planilha vazia' };
@@ -678,7 +717,8 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     let colTotalIdx = headers.findIndex((h) => semAcento(h).includes('LEMBRETES') || semAcento(h) === 'WHATSAPP_COUNT');
 
     const updates = [];
-    let proximaColIdx = headers.length;
+    // Reserva V(21)=STATUS LYRA, W(22)=MODIFICAÇÃO DO STATUS, X(23)=PRAZO MÍNIMO PARA CONCLUSÃO
+    let proximaColIdx = Math.max(headers.length, 24);
 
     if (colStatusIdx === -1) {
       colStatusIdx = proximaColIdx++;
@@ -747,6 +787,81 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
   } catch (err) {
     console.error('❌ Erro ao gravar status do WhatsApp no Google Sheets:', err.message);
     return { sucesso: false, erro: err.message };
+  }
+}
+
+/**
+ * Atualiza a Coluna V ("STATUS LYRA") e a Coluna W ("MODIFICAÇÃO DO STATUS") para um aluno (CPF)
+ * após emissão manual no painel ou atualização de status no Lyra.
+ */
+export async function atualizarStatusLyraNoSheet({
+  spreadsheetId,
+  cpf,
+  statusLyra = 'Aprovado',
+  dataModificacao = null,
+  sheetsOverride = null
+}) {
+  const sheets = sheetsOverride || inicializarGoogleAuth().sheets;
+  if (!sheets || !spreadsheetId) {
+    return { atualizado: false, motivo: 'Planilha não configurada' };
+  }
+
+  try {
+    const nomeAba = await descobrirNomeAba(sheets, spreadsheetId);
+    const rowsRes = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${nomeAba}'!A:AD`
+    });
+    const rows = rowsRes.data.values || [];
+    if (!rows.length) return { atualizado: false, motivo: 'Planilha vazia' };
+
+    const headersNorm = rows[0].map((h) => semAcento(h));
+    const colCpfIdx = headersNorm.findIndex((h) => h === 'CPF');
+    if (colCpfIdx === -1) return { atualizado: false, motivo: 'Coluna CPF não encontrada' };
+
+    const colStatusLyraIdx = headersNorm.findIndex((h) => h.includes('STATUS LYRA'));
+    const colModStatusIdx = headersNorm.findIndex((h) => h.includes('MODIFICACAO DO STATUS'));
+    const cpfBuscado = String(cpf || '').replace(/\D/g, '').padStart(11, '0');
+    const dataValor = dataModificacao || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+
+    const updates = [];
+    let linhasAfetadas = 0;
+
+    for (let i = 1; i < rows.length; i++) {
+      const rowCpf = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
+      if (!rowCpf || rowCpf !== cpfBuscado) continue;
+
+      const numLinha = i + 1;
+      linhasAfetadas++;
+
+      if (colStatusLyraIdx !== -1) {
+        updates.push({
+          range: `'${nomeAba}'!${idxParaColunaA1(colStatusLyraIdx)}${numLinha}`,
+          values: [[statusLyra]]
+        });
+      }
+      if (colModStatusIdx !== -1) {
+        updates.push({
+          range: `'${nomeAba}'!${idxParaColunaA1(colModStatusIdx)}${numLinha}`,
+          values: [[dataValor]]
+        });
+      }
+    }
+
+    if (!linhasAfetadas || !updates.length) {
+      return { atualizado: false, motivo: 'Nenhuma linha ou coluna V/W encontrada para atualizar' };
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      resource: { valueInputOption: 'USER_ENTERED', data: updates }
+    });
+
+    console.log(`✅ [GOOGLE SHEETS] Colunas V/W atualizadas (${statusLyra} em ${dataValor}) para CPF ${cpfBuscado}`);
+    return { atualizado: true, linhasAfetadas, statusLyra, dataModificacao: dataValor };
+  } catch (err) {
+    console.error('❌ Erro ao atualizar STATUS LYRA / MODIFICAÇÃO DO STATUS no Google Sheets:', err.message);
+    return { atualizado: false, erro: err.message };
   }
 }
 
