@@ -98,8 +98,11 @@ const PUBLIC_FORM_URL = (process.env.PUBLIC_FORM_URL || '').replace(/\/+$/, '');
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || null;
 // Modo somente leitura: a planilha é lida normalmente, mas o status EMITIR não é gravado nela (útil em testes locais)
 const SHEET_SOMENTE_LEITURA = ['1', 'true', 'sim'].includes(String(process.env.GOOGLE_SHEET_SOMENTE_LEITURA || '').toLowerCase());
-// Janela de agrupamento das solicitações em um único link (24 horas)
+// Janela de agrupamento das solicitações em um único link (96 horas)
 const JANELA_HORAS = 96;
+// Atraso padrão de segurança antes da emissão automática no Lyra após o aluno preencher (120 minutos)
+const ATRASO_EMISSAO_AUTO_MINUTOS = Math.max(0, Number(process.env.EMISSAO_AUTOMATICA_DELAY_MINUTOS ?? 120));
+const ATRASO_EMISSAO_AUTO_MS = ATRASO_EMISSAO_AUTO_MINUTOS * 60 * 1000;
 
 // Arquivo onde as respostas ficam salvas para sobreviver a reinícios (contém dados pessoais; fora do git)
 const RESPOSTAS_FILE = process.env.RESPOSTAS_FILE
@@ -247,6 +250,97 @@ async function executarEmissaoCursosLyra({ link, cursosParaCertificar = [], jaEm
   const todosEmitidos = cursosParaCertificar.length > 0 && falhas.length === 0;
   return { resultados, falhas, todosEmitidos, emitidosAgora };
 }
+
+let filaEmissaoRodando = false;
+async function processarFilaEmissaoAutomatica() {
+  if (filaEmissaoRodando) return { processados: 0, emitidos: 0, falhas: 0 };
+  if (!configuracoesPainel.certificacaoAutomatica) return { processados: 0, emitidos: 0, falhas: 0 };
+  if (SHEET_SOMENTE_LEITURA) return { processados: 0, emitidos: 0, falhas: 0 };
+  if (!process.env.LYRA_EMAIL || !process.env.LYRA_PASSWORD) return { processados: 0, emitidos: 0, falhas: 0 };
+
+  filaEmissaoRodando = true;
+  let processados = 0;
+  let emitidos = 0;
+  let falhas = 0;
+
+  try {
+    await garantirBaseCarregada();
+    const agoraMs = Date.now();
+
+    for (const [token, reg] of respostas.entries()) {
+      if (!reg || reg.emitidoNoLyra === true) continue;
+      if (reg.emissaoModo !== 'AUTOMATICA_AGENDADA') continue;
+      const agendadoMs = reg.emissaoAgendadaPara ? new Date(reg.emissaoAgendadaPara).getTime() : NaN;
+      if (Number.isNaN(agendadoMs) || agoraMs < agendadoMs) continue;
+      if (emissoesEmAndamento.has(token)) continue;
+
+      const link = links.get(token);
+      if (!link) continue;
+
+      const listaPeriodos = Array.isArray(reg.periodosSugeridos) ? reg.periodosSugeridos : [];
+      const cursosParaCertificar = listaPeriodos.length > 0
+        ? listaPeriodos.filter((p) => !p.ultrapassaHoje && !p.cancelado)
+        : (link.cursos || []);
+
+      if (cursosParaCertificar.length === 0) {
+        reg.emissaoModo = 'AUTOMATICA_SEM_CURSOS';
+        salvarRespostas(RESPOSTAS_FILE, respostas);
+        continue;
+      }
+
+      processados++;
+      emissoesEmAndamento.add(token);
+      try {
+        const execLyra = await executarEmissaoCursosLyra({
+          link,
+          cursosParaCertificar,
+          jaEmitidos: reg.emissaoLyra || []
+        });
+
+        const agoraFormatado = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+        const atualizado = {
+          ...reg,
+          emissaoLyra: execLyra.resultados,
+          emitidoNoLyra: execLyra.todosEmitidos,
+          aguardandoEmissaoManual: !execLyra.todosEmitidos,
+          emissaoModo: execLyra.todosEmitidos ? 'AUTOMATICA' : 'AUTOMATICA_PENDENTE_REVISAO',
+          ...(execLyra.todosEmitidos
+            ? { emitidoEm: agoraFormatado, emitidoPor: `Automático (após ${ATRASO_EMISSAO_AUTO_MINUTOS} min)` }
+            : {})
+        };
+        respostas.set(token, atualizado);
+        salvarRespostas(RESPOSTAS_FILE, respostas);
+
+        if (execLyra.todosEmitidos) {
+          emitidos++;
+          if (GOOGLE_SHEET_ID && !SHEET_SOMENTE_LEITURA) {
+            try {
+              await atualizarStatusLyraNoSheet({
+                spreadsheetId: GOOGLE_SHEET_ID,
+                cpf: link.cpf,
+                statusLyra: 'Aprovado',
+                dataModificacao: agoraFormatado
+              });
+            } catch (err) {
+              console.warn(`⚠️  Erro ao atualizar colunas V/W após emissão agendada (${link.nome}): ${err.message}`);
+            }
+          }
+        } else {
+          falhas++;
+        }
+      } catch (err) {
+        falhas++;
+        console.error(`❌ [LYRA AGENDADO] Erro ao processar token ${token}:`, err.message);
+      } finally {
+        emissoesEmAndamento.delete(token);
+      }
+    }
+  } finally {
+    filaEmissaoRodando = false;
+  }
+
+  return { processados, emitidos, falhas };
+}
 let totalSolicitacoes = 0;
 let ultimaSincronizacaoMs = 0;
 let statusIntegracao = {
@@ -287,8 +381,17 @@ async function carregarBase() {
     porCpf.get(cpf).push(l);
   }
 
-  // Para cada aluno: link = solicitações dentro da janela de 96h até a mais recente
-  for (const [cpf, itens] of porCpf) {
+  // Para cada aluno: link = solicitações ativas dentro da janela de 96h até a mais recente
+  const ehCanceladoPlanilha = (i) => {
+    const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+    const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+    return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
+  };
+
+  for (const [cpf, todosItens] of porCpf) {
+    const itensAtivos = todosItens.filter((i) => !ehCanceladoPlanilha(i));
+    const itens = itensAtivos.length > 0 ? itensAtivos : todosItens;
+
     const datas = itens.map((i) => parseDataBR(i.solicitacao)).filter(Boolean);
     const maisRecente = datas.length ? new Date(Math.max(...datas)) : new Date();
     const inicioJanela = new Date(maisRecente.getTime() - JANELA_HORAS * 3600 * 1000);
@@ -318,14 +421,7 @@ async function carregarBase() {
     const dataReferencia = maisRecente.toISOString().slice(0, 10);
     const token = gerarToken(cpf, dataReferencia);
 
-    // Se todas as linhas do aluno na aba principal estiverem marcadas como "Cancelado" (Coluna I ou V),
-    // mantém na planilha sem exibir no Kanban e bloqueia o link como cancelado (96h).
-    const ehCanceladoPlanilha = (i) => {
-      const stForm = String(i.statusOriginal || '').trim().toUpperCase();
-      const stLyra = String(i.statusLyra || '').trim().toUpperCase();
-      return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
-    };
-    if (itens.every(ehCanceladoPlanilha) && !respostas.has(token)) {
+    if (itensAtivos.length === 0 && !respostas.has(token)) {
       if (!tokensCancelados.has(token)) {
         tokensCancelados.set(token, {
           token,
@@ -629,17 +725,25 @@ app.post('/api/link/:token/resposta', async (req, res) => {
     ? listaPeriodos.filter((p) => !p.ultrapassaHoje && !p.cancelado)
     : (link.cursos || []);
 
-  // Emissão no Lyra condicionada ao interruptor de Certificação Automática do painel
+  // Emissão no Lyra condicionada ao interruptor de Certificação Automática do painel (com janela de 120 min)
   registro.emissaoLyra = [];
   registro.emitidoNoLyra = false;
-  registro.emissaoModo = configuracoesPainel.certificacaoAutomatica ? 'AUTOMATICA' : 'MANUAL';
-  registro.aguardandoEmissaoManual = cursosParaCertificar.length > 0;
+  registro.emissaoModo = configuracoesPainel.certificacaoAutomatica ? 'AUTOMATICA_AGENDADA' : 'MANUAL';
+  registro.aguardandoEmissaoManual = !configuracoesPainel.certificacaoAutomatica && cursosParaCertificar.length > 0;
 
   if (!configuracoesPainel.certificacaoAutomatica) {
     console.log(`⏸️  [LYRA] Certificação automática DESATIVADA no painel: ${link.nome} aguarda clique em "Emitir" na coluna EMITIR.`);
   } else if (SHEET_SOMENTE_LEITURA) {
+    registro.emissaoModo = 'MANUAL';
+    registro.aguardandoEmissaoManual = cursosParaCertificar.length > 0;
     console.log('ℹ️  Planilha em modo somente leitura (GOOGLE_SHEET_SOMENTE_LEITURA): emissão automática no Lyra não executada.');
+  } else if (cursosParaCertificar.length > 0 && ATRASO_EMISSAO_AUTO_MS > 0) {
+    const agendadoEm = new Date(agora.getTime() + ATRASO_EMISSAO_AUTO_MS);
+    registro.emissaoAgendadaPara = agendadoEm.toISOString();
+    registro.emissaoAgendadaParaFormatada = agendadoEm.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    console.log(`⏱️  [LYRA] Emissão automática de ${link.nome} agendada para ${registro.emissaoAgendadaParaFormatada} (+${ATRASO_EMISSAO_AUTO_MINUTOS} min).`);
   } else if (process.env.LYRA_EMAIL && process.env.LYRA_PASSWORD && cursosParaCertificar.length > 0) {
+    registro.emissaoModo = 'AUTOMATICA';
     const execLyra = await executarEmissaoCursosLyra({ link, cursosParaCertificar });
     registro.emissaoLyra = execLyra.resultados;
     registro.emitidoNoLyra = execLyra.todosEmitidos;
@@ -1205,6 +1309,16 @@ app.post('/api/notificacoes/whatsapp', middlewareAutenticacaoAdmin, async (req, 
 });
 
 
+// Acionador da fila de emissão automática (útil para cron externo / Vercel ou processamento sob demanda)
+app.all('/api/cron/emissao-automatica', middlewareAutenticacaoAdmin, async (req, res) => {
+  try {
+    const resultado = await processarFilaEmissaoAutomatica();
+    return res.json({ sucesso: true, ...resultado });
+  } catch (err) {
+    return res.status(500).json({ sucesso: false, mensagem: err.message });
+  }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -1241,6 +1355,14 @@ if (isDirectRun) {
     }
     console.log(`========================================================\n`);
   });
+
+  // Verifica periodicamente (a cada 30s) emissões automáticas que atingiram a janela de 120 minutos
+  const intervaloFilaMs = Math.max(500, Number(process.env.FILA_EMISSAO_INTERVALO_MS || 30000));
+  setInterval(() => {
+    processarFilaEmissaoAutomatica().catch((err) => {
+      console.error('❌ Erro no loop da fila de emissão automática:', err.message);
+    });
+  }, intervaloFilaMs).unref();
 }
 
 export { app, carregarBase };

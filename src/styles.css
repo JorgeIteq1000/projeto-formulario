@@ -3001,3 +3001,23 @@ a.btn-card-primary {
     min-width: unset;
   }
 }
+
+.badge-scheduled-emit {
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lyra-scheduled-box {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #bfdbfe;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}

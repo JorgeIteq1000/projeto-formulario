@@ -193,6 +193,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
 
   const Card = ({ item }) => {
     const jaEmitidoLyra = item.resposta?.emitidoNoLyra === true;
+    const agendadoAuto = item.resposta?.emissaoModo === 'AUTOMATICA_AGENDADA' && !jaEmitidoLyra;
     const aguardandoManual = Boolean(item.resposta?.aguardandoEmissaoManual) && !jaEmitidoLyra;
     const estaEmitindoEste = Boolean(emitindoPorToken[item.token]);
 
@@ -204,6 +205,10 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
             <span className="card-badge badge-pending">Aguardando aluno</span>
           ) : jaEmitidoLyra ? (
             <span className="card-badge badge-success">🎓 Emitido no Lyra</span>
+          ) : agendadoAuto ? (
+            <span className="card-badge badge-scheduled-emit" title="A emissão automática ocorrerá após 120 minutos do envio">
+              ⏱️ Auto em 120 min
+            </span>
           ) : aguardandoManual ? (
             <span className="card-badge badge-awaiting-emit">⏳ Aguardando emissão</span>
           ) : (
@@ -281,6 +286,12 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {agendadoAuto && item.resposta?.emissaoAgendadaParaFormatada && (
+              <div className="lyra-scheduled-box">
+                ⏱️ Emissão automática agendada para <strong>{item.resposta.emissaoAgendadaParaFormatada}</strong> (janela de 120 min). Você pode antecipar clicando em <strong>Emitir</strong>.
               </div>
             )}
 
@@ -454,7 +465,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
             </div>
             <span className="auto-cert-desc">
               {certificacaoAutomatica
-                ? 'Emite automaticamente no Lyra ao enviar o formulário'
+                ? 'Emite automaticamente no Lyra 120 min após o aluno enviar'
                 : 'Requer clicar em "Emitir" no card da coluna EMITIR'}
             </span>
           </div>

@@ -271,7 +271,7 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
           modificacaoStatus: headersSemAcento.findIndex(h => h.includes('MODIFICACAO DO STATUS')),
           prazoMinimoConclusao: headersSemAcento.findIndex(h => h.includes('PRAZO MINIMO')),
           statusWhatsApp: headersSemAcento.findIndex(h => h.includes('STATUS WHATSAPP') || h === 'WHATSAPP_STATUS' || h.includes('STATUS ZIONIC')),
-          dataUltimoWhatsApp: headersSemAcento.findIndex(h => h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA' || h.includes('DATA WHATSAPP')),
+          dataUltimoWhatsApp: headersSemAcento.findIndex(h => h.includes('DATA ENVIO WHATSAPP') || h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA' || h.includes('DATA WHATSAPP')),
           totalLembretesWhatsApp: headersSemAcento.findIndex(h => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT')
         };
 
@@ -709,26 +709,33 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     if (!rows.length) return { sucesso: false, motivo: 'Planilha vazia' };
     const headers = rows[0] || [];
 
-    const colCpfIdx = headers.findIndex((h) => semAcento(h) === 'CPF');
+    const headersNorm = headers.map((h) => semAcento(h));
+    const colCpfIdx = headersNorm.findIndex((h) => h === 'CPF');
     if (colCpfIdx === -1) return { sucesso: false, motivo: 'Coluna CPF não encontrada' };
 
-    let colStatusIdx = headers.findIndex((h) => semAcento(h).includes('STATUS WHATSAPP') || semAcento(h) === 'WHATSAPP_STATUS');
-    let colDataIdx = headers.findIndex((h) => semAcento(h).includes('DATA ULTIMO WHATSAPP') || semAcento(h) === 'WHATSAPP_DATA');
-    let colTotalIdx = headers.findIndex((h) => semAcento(h).includes('LEMBRETES') || semAcento(h) === 'WHATSAPP_COUNT');
+    const colStatusFormIdx = headersNorm.findIndex((h) => h === 'STATUS DO FORMULARIO' || h === 'STATUS DO EVENTO');
+    const colStatusFormFinalIdx = colStatusFormIdx !== -1
+      ? colStatusFormIdx
+      : headersNorm.findIndex((h) => h.includes('STATUS') && !h.includes('LYRA') && !h.includes('MODIFICACAO') && !h.includes('WHATSAPP'));
+
+    // Coluna Y (24) = DATA ENVIO WHATSAPP, Coluna Z (25) = STATUS WHATSAPP, Coluna AA (26) = TOTAL LEMBRETES WHATSAPP
+    let colDataIdx = headersNorm.findIndex((h) => h.includes('DATA ENVIO WHATSAPP') || h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA');
+    let colStatusIdx = headersNorm.findIndex((h) => h.includes('STATUS WHATSAPP') || h === 'WHATSAPP_STATUS');
+    let colTotalIdx = headersNorm.findIndex((h) => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT');
 
     const updates = [];
     // Reserva V(21)=STATUS LYRA, W(22)=MODIFICAÇÃO DO STATUS, X(23)=PRAZO MÍNIMO PARA CONCLUSÃO
     let proximaColIdx = Math.max(headers.length, 24);
 
+    if (colDataIdx === -1) {
+      colDataIdx = proximaColIdx++;
+      const letra = idxParaColunaA1(colDataIdx);
+      updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['DATA ENVIO WHATSAPP']] });
+    }
     if (colStatusIdx === -1) {
       colStatusIdx = proximaColIdx++;
       const letra = idxParaColunaA1(colStatusIdx);
       updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['STATUS WHATSAPP']] });
-    }
-    if (colDataIdx === -1) {
-      colDataIdx = proximaColIdx++;
-      const letra = idxParaColunaA1(colDataIdx);
-      updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['DATA ULTIMO WHATSAPP']] });
     }
     if (colTotalIdx === -1) {
       colTotalIdx = proximaColIdx++;
@@ -739,6 +746,7 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     const letraStatus = idxParaColunaA1(colStatusIdx);
     const letraData = idxParaColunaA1(colDataIdx);
     const letraTotal = idxParaColunaA1(colTotalIdx);
+    const letraStatusForm = colStatusFormFinalIdx !== -1 ? idxParaColunaA1(colStatusFormFinalIdx) : null;
 
     const porCpf = new Map();
     for (const it of itens) {
@@ -747,7 +755,7 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     }
 
     let linhasAfetadas = 0;
-    const agoraStr = new Date().toLocaleString('pt-BR');
+    const agoraStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 
     for (let i = 1; i < rows.length; i++) {
       const digitos = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
@@ -756,10 +764,18 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
       const info = porCpf.get(digitos);
       const linhaNum = i + 1;
 
+      // Atualiza Coluna I (STATUS DO FORMULÁRIO) para "Enviado" apenas se ainda estiver pendente de envio
+      if (letraStatusForm) {
+        const statusAtualForm = semAcento(rows[i][colStatusFormFinalIdx]);
+        if (!statusAtualForm || statusAtualForm === 'PENDENTE_ENVIO' || statusAtualForm === 'PENDENTE') {
+          updates.push({ range: `'${nomeAba}'!${letraStatusForm}${linhaNum}`, values: [['Enviado']] });
+        }
+      }
+
+      updates.push({ range: `'${nomeAba}'!${letraData}${linhaNum}`, values: [[info.dataUltimoWhatsApp || agoraStr]] });
       if (info.statusWhatsApp) {
         updates.push({ range: `'${nomeAba}'!${letraStatus}${linhaNum}`, values: [[info.statusWhatsApp]] });
       }
-      updates.push({ range: `'${nomeAba}'!${letraData}${linhaNum}`, values: [[info.dataUltimoWhatsApp || agoraStr]] });
       if (typeof info.totalLembretes === 'number') {
         updates.push({ range: `'${nomeAba}'!${letraTotal}${linhaNum}`, values: [[String(info.totalLembretes)]] });
       }

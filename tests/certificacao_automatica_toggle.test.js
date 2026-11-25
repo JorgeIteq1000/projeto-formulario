@@ -183,6 +183,7 @@ test('Interruptor de Certificação Automática: controla emissão automática v
     RESPOSTAS_FILE: path.join(dir, 'respostas.json'),
     CONFIG_FILE: path.join(dir, 'config.json'),
     GOOGLE_SHEET_SOMENTE_LEITURA: 'false',
+    EMISSAO_AUTOMATICA_DELAY_MINUTOS: '0.01', // ~600ms para validar a janela de espera (padrão em prod: 120 min)
     LYRA_EMAIL: 'bot@iteq.test',
     LYRA_PASSWORD: '123',
     LYRA_API_URL: `http://127.0.0.1:${mockPort}/`,
@@ -282,7 +283,7 @@ test('Interruptor de Certificação Automática: controla emissão automática v
     const cfgAposRestart = await (await fetch(`${base}/api/configuracoes`, { headers: authHeaders })).json();
     assert.equal(cfgAposRestart.dados.certificacaoAutomatica, true, 'Estado do interruptor deve persistir após reinício');
 
-    // 5. Com interruptor ATIVO: Aluno 2 envia o formulário -> emite automaticamente no Lyra na hora!
+    // 5. Com interruptor ATIVO: Aluno 2 envia o formulário -> AGENDA emissão (não emite imediatamente!)
     const payloadAluno2 = {
       professor: false,
       confirmacao: true,
@@ -308,7 +309,26 @@ test('Interruptor de Certificação Automática: controla emissão automática v
     assert.equal(respEnvio2.status, 200);
     const jsonEnvio2 = await respEnvio2.json();
     assert.equal(jsonEnvio2.sucesso, true);
-    assert.equal(aprovacoesLyra.length, 2, 'Com interruptor ativo, Lyra deve emitir automaticamente no envio do aluno');
+    assert.equal(aprovacoesLyra.length, 1, 'No envio imediato, deve agendar para depois da janela de espera');
+
+    const solAgendado = await (await fetch(`${base}/api/solicitacoes`, { headers: authHeaders })).json();
+    const cardAgendado = solAgendado.dados.find((d) => d.token === alunoAuto.token);
+    assert.equal(cardAgendado.resposta.emitidoNoLyra, false);
+    assert.equal(cardAgendado.resposta.emissaoModo, 'AUTOMATICA_AGENDADA');
+    assert.ok(cardAgendado.resposta.emissaoAgendadaPara);
+
+    // Aguarda a janela configurada (~600ms) e aciona a fila de emissão automática
+    await new Promise((r) => setTimeout(r, 800));
+    const respCron = await fetch(`${base}/api/cron/emissao-automatica`, {
+      method: 'POST',
+      headers: authHeaders
+    });
+    assert.equal(respCron.status, 200);
+    const jsonCron = await respCron.json();
+    assert.equal(jsonCron.sucesso, true);
+    assert.equal(jsonCron.emitidos, 1);
+
+    assert.equal(aprovacoesLyra.length, 2, 'Após a janela de espera, fila deve emitir automaticamente no Lyra');
     assert.equal(aprovacoesLyra[1].dataCourse.startDate, '2026-05-04T03:00:00.000Z');
     assert.equal(aprovacoesLyra[1].dataCourse.endDate, '2026-06-04T03:00:00.000Z');
 

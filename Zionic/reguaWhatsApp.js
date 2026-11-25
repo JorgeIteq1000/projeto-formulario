@@ -179,8 +179,18 @@ export async function executarReguaWhatsApp({
   const filaDeEnvios = [];
 
   // Fase 1: Análise e Montagem da Fila de Ações
-  for (const [cpf, itens] of porCpf) {
+  const ehCanceladoLinha = (i) => {
+    const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+    const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+    return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
+  };
+
+  for (const [cpf, todosItens] of porCpf) {
     relatorio.avaliados++;
+    // Se o aluno tem linha antiga cancelada e reabriu nova solicitação ativa, trabalha apenas com as ativas
+    const itensAtivos = todosItens.filter((i) => !ehCanceladoLinha(i));
+    const itens = itensAtivos.length > 0 ? itensAtivos : todosItens;
+
     const nome = itens[0].nome || 'Aluno(a)';
     const telefone = itens.find((i) => i.telefone)?.telefone || '';
     const cursos = [...new Set(itens.map((i) => i.curso).filter(Boolean))];
@@ -202,12 +212,8 @@ export async function executarReguaWhatsApp({
       continue;
     }
 
-    // Verifica se já está marcado como Cancelado na mesma aba (Coluna I ou Coluna V)
-    const jaCanceladoPlanilha = itens.every((i) => {
-      const stForm = String(i.statusOriginal || '').trim().toUpperCase();
-      const stLyra = String(i.statusLyra || '').trim().toUpperCase();
-      return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
-    });
+    // Verifica se todas as linhas restantes estão marcadas como Cancelado na mesma aba
+    const jaCanceladoPlanilha = itensAtivos.length === 0;
 
     if (!telefone || telefone.length < 10) {
       relatorio.semTelefone++;

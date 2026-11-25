@@ -105,24 +105,34 @@ test('atualizarStatusLyraNoSheet: atualiza Coluna V (STATUS LYRA) e Coluna W (MO
   assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!W2"), '25/11/2026 16:00:00');
 });
 
-test('gravarStatusWhatsAppNaPlanilha: reserva V, W, X e cria colunas de WhatsApp somente a partir de Y', async () => {
-  const headers = ['SOLICITAÇÃO', 'CPF', 'NOME']; // planilha mínima simulada
-  const linha = ['25/11/2026', '12345678901', 'Aluno Teste'];
+test('gravarStatusWhatsAppNaPlanilha: marca Enviado (I), grava data na Coluna Y e reserva V, W, X', async () => {
+  const headers = [
+    'SOLICITAÇÃO', 'CPF', 'NOME', '', '', '', '', '', 'STATUS DO FORMULÁRIO'
+  ];
+  const linhaPendente = ['25/11/2026', '12345678901', 'Aluno Pendente', '', '', '', '', '', 'PENDENTE_ENVIO'];
+  const linhaJaEmitir = ['25/11/2026', '99988877766', 'Aluno Emitir', '', '', '', '', '', 'EMITIR'];
 
-  const { sheets, batches } = criarMockSheets([headers, linha]);
+  const { sheets, batches } = criarMockSheets([headers, linhaPendente, linhaJaEmitir]);
 
   const res = await gravarStatusWhatsAppNaPlanilha({
     spreadsheetId: 'sheet-mock-3',
-    itens: [{ cpf: '12345678901', statusWhatsApp: 'D0_ENVIADO', dataUltimoWhatsApp: '25/11/2026 16:05:00', totalLembretes: 0 }],
+    itens: [
+      { cpf: '12345678901', statusWhatsApp: 'D0_ENVIADO', dataUltimoWhatsApp: '25/11/2026 16:05:00', totalLembretes: 0 },
+      { cpf: '99988877766', statusWhatsApp: 'D0_ENVIADO', dataUltimoWhatsApp: '25/11/2026 16:05:00', totalLembretes: 0 }
+    ],
     sheetsOverride: sheets
   });
 
   assert.equal(res.sucesso, true);
   const updates = batches.flat();
-  const ranges = updates.map((u) => u.range);
+  const porRange = new Map(updates.map((u) => [u.range, u.values[0][0]]));
 
-  assert.ok(ranges.some((r) => r.includes('!Y1')));
-  assert.ok(ranges.some((r) => r.includes('!Z1')));
-  assert.ok(ranges.some((r) => r.includes('!AA1')));
-  assert.equal(ranges.some((r) => r.includes('!V') || r.includes('!W') || r.includes('!X')), false);
+  assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!Y1"), 'DATA ENVIO WHATSAPP');
+  assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!Z1"), 'STATUS WHATSAPP');
+  assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!AA1"), 'TOTAL LEMBRETES WHATSAPP');
+  assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!I2"), 'Enviado');
+  assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!Y2"), '25/11/2026 16:05:00');
+  assert.equal(porRange.get("'Extensões e Aperfeiçoamentos'!Z2"), 'D0_ENVIADO');
+  assert.equal(porRange.has("'Extensões e Aperfeiçoamentos'!I3"), false, 'Não deve sobrescrever status EMITIR');
+  assert.equal(updates.some((u) => u.range.includes('!V') || u.range.includes('!W') || u.range.includes('!X')), false);
 });

@@ -73,3 +73,8 @@
   - Atualizado [`scripts/googleAppsScript.gs`](file:///d:/projeto-formulario/scripts/googleAppsScript.gs) (`verificarExpiracao96h`) para **não arrastar/mover** linhas expiradas para outra aba, marcando `"Cancelado"` nas colunas I e V e a data/hora na coluna W.
   - Atualizados [`services/googleSheets.js`](file:///d:/projeto-formulario/services/googleSheets.js), [`server.js`](file:///d:/projeto-formulario/server.js) e [`Zionic/reguaWhatsApp.js`](file:///d:/projeto-formulario/Zionic/reguaWhatsApp.js) para gravar a data de modificação na Coluna W no preenchimento/emissão, reconhecer `"Cancelado"` na mesma aba e reservar V/W/X.
   - Criada suíte de testes [`tests/colunas_vwx_sheets.test.js`](file:///d:/projeto-formulario/tests/colunas_vwx_sheets.test.js).
+
+- [x] **Tarefa 13: Ajustes Finais das 5 Frentes (Coluna I/Y no 1º Envio, Re-listagem após Cancelado e Janela de 120 min)**
+  - **Frente 2 (`services/googleSheets.js`):** Ao disparar o WhatsApp, marca `"Enviado"` na Coluna I (`STATUS DO FORMULÁRIO`, se ainda pendente) e a data/hora na Coluna Y (`DATA ENVIO WHATSAPP`), movendo status/contador da régua para Z e AA.
+  - **Frente 4 (`LISTADOR/listador-extensoes-aperf.py`, `server.js`, `Zionic/reguaWhatsApp.js`):** Grava `_id` na Coluna J (`ID DO EVENTO`) e ignora linhas `"Cancelado"` na trava anti-duplicidade, permitindo re-listagem automática caso o aluno abra nova solicitação com o mesmo contrato.
+  - **Frente 5 (`server.js`, `src/components/AdminKanban.jsx`, `src/styles.css`):** Quando o interruptor está ativo, agenda a emissão automática no Lyra para **+120 minutos** após o envio do formulário, com exibição do horário previsto no card e processamento contínuo em segundo plano (`processarFilaEmissaoAutomatica`).

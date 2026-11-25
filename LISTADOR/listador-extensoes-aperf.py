@@ -361,6 +361,7 @@ def executar_rotina_automatizada(session_id=None):
         log("📝 Preparando Anti-Duplicidade do Google Sheets...")
         dados_existentes = []
         chaves_existentes = {}
+        ids_eventos_existentes = set()
         try:
             dados_existentes = sheet.get_all_values()
             if len(dados_existentes) > 1:
@@ -369,6 +370,7 @@ def executar_rotina_automatizada(session_id=None):
                 idx_tipo = headers_norm.index("TIPO DE CERTIFICADO") if "TIPO DE CERTIFICADO" in headers_norm else 3
                 idx_curso = headers_norm.index("CURSO") if "CURSO" in headers_norm else 5
                 idx_status_form = next((i for i, h in enumerate(headers_norm) if "STATUS DO FORMULARIO" in h or "STATUS DO EVENTO" in h), 8)
+                idx_id_evento = next((i for i, h in enumerate(headers_norm) if "ID DO EVENTO" in h), 9)
                 idx_status_lyra = next((i for i, h in enumerate(headers_norm) if "STATUS LYRA" in h), 21)
                 idx_mod_status = next((i for i, h in enumerate(headers_norm) if "MODIFICACAO DO STATUS" in h), 22)
                 idx_prazo_min = next((i for i, h in enumerate(headers_norm) if "PRAZO MINIMO" in h), 23)
@@ -377,17 +379,30 @@ def executar_rotina_automatizada(session_id=None):
                     cpf_row = row[idx_cpf].strip() if len(row) > idx_cpf else ""
                     tipo_row = row[idx_tipo].strip().upper() if len(row) > idx_tipo else ""
                     curso_row = row[idx_curso].strip().upper() if len(row) > idx_curso else ""
-                    if cpf_row and curso_row:
+                    st_form_row = row[idx_status_form].strip() if len(row) > idx_status_form else ""
+                    st_lyra_row = row[idx_status_lyra].strip() if len(row) > idx_status_lyra else ""
+                    id_ev_row = row[idx_id_evento].strip() if len(row) > idx_id_evento else ""
+
+                    if re.match(r'^[0-9a-fA-F]{24}$', id_ev_row):
+                        ids_eventos_existentes.add(id_ev_row)
+
+                    # Linhas já marcadas como Cancelado não bloqueiam novas solicitações reabertas para o mesmo curso/contrato
+                    eh_cancelada = (
+                        normalizar_texto(st_form_row) in ("CANCELADO", "CANCELADO_96H")
+                        or normalizar_texto(st_lyra_row) == "CANCELADO"
+                    )
+                    if cpf_row and curso_row and not eh_cancelada:
                         chaves_existentes[f"{cpf_row}|{tipo_row}|{curso_row}"] = {
                             "row": num_linha,
-                            "status_form": row[idx_status_form].strip() if len(row) > idx_status_form else "",
-                            "status_lyra": row[idx_status_lyra].strip() if len(row) > idx_status_lyra else "",
+                            "status_form": st_form_row,
+                            "status_lyra": st_lyra_row,
                             "mod_status": row[idx_mod_status].strip() if len(row) > idx_mod_status else "",
                             "prazo_min": row[idx_prazo_min].strip() if len(row) > idx_prazo_min else "",
                         }
         except Exception as e:
             log(f"⚠️ Erro ao verificar duplicidade: {e}")
             chaves_existentes = {}
+            ids_eventos_existentes = set()
 
         def col_idx_para_a1(idx0):
             res = ""
@@ -454,7 +469,11 @@ def executar_rotina_automatizada(session_id=None):
                 except Exception:
                     pass
 
-            # Trava anti-duplicidade (atualiza Status Lyra / Prazo Mínimo em linhas já existentes se necessário)
+            # Trava anti-duplicidade: verifica pelo ID da solicitação ou por chave ativa (linhas canceladas não bloqueiam reabertura)
+            solicitacao_id = str(r.get("_id") or "").strip()
+            if solicitacao_id and solicitacao_id in ids_eventos_existentes:
+                continue
+
             chave_atual = f"{cpf}|{tipo_certificado.upper()}|{curso.upper()}"
             if chave_atual in chaves_existentes:
                 existente = chaves_existentes[chave_atual]
@@ -466,6 +485,8 @@ def executar_rotina_automatizada(session_id=None):
                 if (not existente["prazo_min"] or existente["prazo_min"] == "N/A") and previsao_termino and previsao_termino != "N/A":
                     updates_existentes.append({"range": f"{col_x_letra}{row_num}", "values": [[previsao_termino]]})
                 continue
+            if solicitacao_id:
+                ids_eventos_existentes.add(solicitacao_id)
             chaves_existentes[chave_atual] = {"row": -1, "status_form": "", "status_lyra": status_lyra, "mod_status": "", "prazo_min": previsao_termino}
             
             nome = r.get("dataStudent", {}).get("name", "")
@@ -536,7 +557,7 @@ def executar_rotina_automatizada(session_id=None):
                 "STATUS DO FORMULARIO": "PENDENTE_ENVIO",
                 "STATUS LYRA": status_lyra,
                 "MODIFICACAO DO STATUS": "",
-                "ID DO EVENTO": "N/A",
+                "ID DO EVENTO": str(r.get("_id") or "N/A"),
                 "DATA CRIACAO EVENTO": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "TELEFONE": telefone,
                 "DATA INICIO (ISO)": data_inicio_iso,
