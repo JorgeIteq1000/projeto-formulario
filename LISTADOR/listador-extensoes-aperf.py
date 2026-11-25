@@ -77,6 +77,7 @@ def traduzir_status_lyra(status_raw):
     s = str(status_raw or "").strip().lower()
     mapa = {
         "waiting_approval": "Aguardando Aprovação",
+        "waiting_payment": "Aguardando Pagamento",
         "approved": "Aprovado",
         "canceled": "Cancelado",
         "cancelled": "Cancelado",
@@ -239,40 +240,58 @@ def executar_rotina_automatizada(session_id=None):
             log(f"❌ Erro Crítico ao conectar na aba com a chave 123.json. Extrator encerrado.")
             return
 
-        log("🔎 Buscando a Página 1 para Mapeamento Global...")
-        rota_sonda = f'certificates/certificate-solicitations?status=waiting_approval&sort={{"_id":-1}}&page=1&limit=50&aggregate=[]'
-        data_sonda = bater_na_api(rota_sonda, headers)
-        
-        if not data_sonda or 'data' not in data_sonda:
-            log("❌ Erro ao ler a API na página 1 ou fim absoluto dos registros.")
-            return
-            
-        meta_paginate = data_sonda.get("metadata", {}).get("paginate", {})
-        total_pages = meta_paginate.get("lastPage", 1)
-        total_docs = meta_paginate.get("total", "??")
-        
-        log(f"🎯 Total na API detectado: {total_docs} Documentos espalhados em {total_pages} Páginas.")
-        
-        resultados_brutos = data_sonda['data']
-        
-        if total_pages > 1:
-            log("🚀 Disparando Exército de Agentes para capturar as páginas em paralelo...")
-            paginas_restantes = range(2, total_pages + 1)
-            
-            def worker_fetch(pg):
-                rota = f'certificates/certificate-solicitations?status=waiting_approval&sort={{"_id":-1}}&page={pg}&limit=50&aggregate=[]'
-                d = bater_na_api(rota, headers)
-                if d and 'data' in d:
-                    log(f"⚡ [AGENTE] Página {pg}/{total_pages} capturada com sucesso!")
-                    return d['data']
-                return []
+        resultados_brutos = []
+        ids_vistos = set()
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                futures = {executor.submit(worker_fetch, pg): pg for pg in paginas_restantes}
-                for future in concurrent.futures.as_completed(futures):
-                    res = future.result()
-                    if res:
-                        resultados_brutos.extend(res)
+        for status_alvo, rotulo_status in [
+            ("waiting_approval", "Aguardando Aprovação"),
+            ("waiting_payment", "Aguardando Pagamento"),
+        ]:
+            log(f"🔎 Buscando solicitações no Lyra com status '{rotulo_status}' ({status_alvo})...")
+            rota_sonda = f'certificates/certificate-solicitations?status={status_alvo}&sort={{"_id":-1}}&page=1&limit=50&aggregate=[]'
+            data_sonda = bater_na_api(rota_sonda, headers)
+
+            if not data_sonda or 'data' not in data_sonda:
+                log(f"⚠️ Não foi possível ler a página 1 de '{status_alvo}'.")
+                continue
+
+            meta_paginate = data_sonda.get("metadata", {}).get("paginate", {})
+            total_pages = meta_paginate.get("lastPage", 1)
+            total_docs = meta_paginate.get("total", "??")
+            log(f"🎯 [{rotulo_status}] Detectados {total_docs} documentos em {total_pages} página(s).")
+
+            itens_fila = list(data_sonda['data'])
+            if total_pages > 1:
+                paginas_restantes = range(2, total_pages + 1)
+
+                def worker_fetch(pg, st=status_alvo):
+                    rota = f'certificates/certificate-solicitations?status={st}&sort={{"_id":-1}}&page={pg}&limit=50&aggregate=[]'
+                    d = bater_na_api(rota, headers)
+                    if d and 'data' in d:
+                        log(f"⚡ [{st}] Página {pg}/{total_pages} capturada!")
+                        return d['data']
+                    return []
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = {executor.submit(worker_fetch, pg): pg for pg in paginas_restantes}
+                    for future in concurrent.futures.as_completed(futures):
+                        res = future.result()
+                        if res:
+                            itens_fila.extend(res)
+
+            for item in itens_fila:
+                item_id = str(item.get("_id") or "")
+                if item_id and item_id in ids_vistos:
+                    continue
+                if item_id:
+                    ids_vistos.add(item_id)
+                # Preserva a fila de origem pois a API do Lyra retorna status='waiting_approval' mesmo em waiting_payment
+                item["_status_lyra_origem"] = status_alvo
+                resultados_brutos.append(item)
+
+        if not resultados_brutos:
+            log("❌ Nenhum registro retornado pela API nas filas selecionadas.")
+            return
 
         log("✅ Todo o ecossistema foi baixado! Realizando cruzamento estrito de filtros...")
 
@@ -395,7 +414,7 @@ def executar_rotina_automatizada(session_id=None):
             elif tipo_raw == "print": tipo_certificado = "Impresso"
             else: tipo_certificado = tipo_raw.capitalize()
 
-            status_lyra = traduzir_status_lyra(r.get("status"))
+            status_lyra = traduzir_status_lyra(r.get("_status_lyra_origem") or r.get("status"))
 
             # Extrair dados de matrícula (enrolment) para Prazo Mínimo e Datas
             contrato = "N/A"

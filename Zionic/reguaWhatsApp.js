@@ -185,25 +185,29 @@ export async function executarReguaWhatsApp({
     const telefone = itens.find((i) => i.telefone)?.telefone || '';
     const cursos = [...new Set(itens.map((i) => i.curso).filter(Boolean))];
 
-    // Verifica se já foi emitido (ou se já possui protocolo) ou cancelado na planilha
-    const jaEmitidoOuCancelado = itens.some((i) => {
+    // 1. Verifica se já foi emitido (ou possui protocolo) -> ignora sempre
+    const jaEmitido = itens.some((i) => {
       const stForm = String(i.statusOriginal || '').trim().toUpperCase();
       const stLyra = String(i.statusLyra || '').trim().toUpperCase();
       return (
         stForm === 'EMITIR' ||
-        stForm === 'CANCELADO' ||
-        stForm === 'CANCELADO_96H' ||
-        stLyra === 'CANCELADO' ||
         stLyra === 'APROVADO' ||
         String(i.protocolo || '').trim().length > 0
       );
     });
 
-    if (jaEmitidoOuCancelado) {
+    if (jaEmitido) {
       relatorio.jaEmitidos++;
-      relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_JA_EMITIDO_OU_CANCELADO' });
+      relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_JA_EMITIDO' });
       continue;
     }
+
+    // Verifica se já está marcado como Cancelado na mesma aba (Coluna I ou Coluna V)
+    const jaCanceladoPlanilha = itens.every((i) => {
+      const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+      const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+      return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
+    });
 
     if (!telefone || telefone.length < 10) {
       relatorio.semTelefone++;
@@ -255,8 +259,22 @@ export async function executarReguaWhatsApp({
     let proximoStatus = null;
     let novoTotalLembretes = totalLembretes;
 
-    // 1. D0 (Boas-vindas): Nunca recebeu nada
-    if (!statusAtual) {
+    // 0. Se já foi marcado como Cancelado na planilha pelo Apps Script (96h):
+    //    - Se já recebeu algum contato antes e ainda não recebeu o aviso EXPIRADO, dispara o aviso final!
+    //    - Se nunca recebeu contato ou já recebeu EXPIRADO, apenas ignora.
+    if (jaCanceladoPlanilha) {
+      if (statusAtual && statusAtual !== 'EXPIRADO') {
+        etapa = 'EXPIRADO_96H';
+        mensagem = montarMensagemExpirado({ nome, cursos });
+        proximoStatus = 'EXPIRADO';
+      } else {
+        relatorio.jaEmitidos++;
+        relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_CANCELADO_JA_NOTIFICADO' });
+        continue;
+      }
+    }
+    // 1. D0 (Boas-vindas): Nunca recebeu nada e ainda está dentro do prazo (< 96h)
+    else if (!statusAtual && horasRestantes > 0) {
       etapa = 'D0_BOAS_VINDAS';
       mensagem = montarMensagemCertificado({ nome, cursos, linkUrl: linkAtual });
       proximoStatus = 'D0_ENVIADO';
