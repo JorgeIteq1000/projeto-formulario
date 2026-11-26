@@ -13,6 +13,8 @@ function extrairPrimeiroNome(nome) {
   return nomeLimpo.split(/\s+/)[0] || 'Aluno(a)';
 }
 
+const RODAPE_AUTOMATICO = '*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*';
+
 function formatarListaCursos(cursos = []) {
   const nomesCursos = [
     ...new Set(
@@ -55,7 +57,9 @@ Clique no link abaixo e preencha as informações para que possamos dar continui
 
 Link: ${linkUrl}
 
-A falta de preenchimento ocasionará o cancelamento ${plural ? 'das solicitações' : 'da solicitação'}.`;
+A falta de preenchimento ocasionará o cancelamento ${plural ? 'das solicitações' : 'da solicitação'}.
+
+${RODAPE_AUTOMATICO}`;
 }
 
 /**
@@ -69,7 +73,9 @@ export function montarMensagemLembreteDiario({ nome, cursos = [], linkUrl }) {
     plural ? 'dos seus certificados' : 'do seu certificado'
   }.
 
-Link: ${linkUrl}`;
+Link: ${linkUrl}
+
+${RODAPE_AUTOMATICO}`;
 }
 
 /**
@@ -85,17 +91,19 @@ export function montarMensagemAlerta2Horas({ nome, cursos = [], linkUrl }) {
     plural ? 'novas solicitações' : 'uma nova solicitação'
   } em seu portal do aluno.
 
-Link: ${linkUrl}`;
+Link: ${linkUrl}
+
+${RODAPE_AUTOMATICO}`;
 }
 
 /**
- * 4ª Mensagem (96h - Solicitação cancelada por falta de interação)
+ * 4ª Mensagem (96h - Solicitação cancelada por falta de interatividade)
  */
 export function montarMensagemExpirado({ nome, cursos = [] }) {
   const primeiroNome = extrairPrimeiroNome(nome);
   const { plural, listaCursosTexto } = formatarListaCursos(cursos);
 
-  return `Prezado(a) *${primeiroNome}*, por falta de interação, ${
+  return `Prezado(a) *${primeiroNome}*, por falta de interatividade, ${
     plural
       ? 'suas solicitações de certificados referentes aos cursos'
       : 'sua solicitação de certificado referente ao curso'
@@ -107,5 +115,7 @@ ${plural ? 'foram canceladas' : 'foi cancelada'}.
 
 Caso ainda tenha interesse, realize ${
     plural ? 'novas solicitações' : 'uma nova solicitação'
-  } em seu portal do aluno e será enviado um novo formulário.`;
+  } em seu portal do aluno e será enviado um novo formulário.
+
+${RODAPE_AUTOMATICO}`;
 }

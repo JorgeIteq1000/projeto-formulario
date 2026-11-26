@@ -21,6 +21,7 @@ test('Zionic Templates: 1ª mensagem (D0) trata singular e plural corretamente c
   assert.ok(msgSingular.includes('à sua solicitação'));
   assert.ok(msgSingular.includes('cancelamento da solicitação'));
   assert.ok(msgSingular.includes('Link: https://certificadoies.com.br/solicitacoes/token123'));
+  assert.ok(msgSingular.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
 
   const msgPlural = montarMensagemCertificado({
     nome: 'Carlos Eduardo da Silva',
@@ -43,6 +44,7 @@ test('Zionic Templates: 2ª mensagem (Lembrete) trata singular e plural corretam
   assert.ok(msgSingular.includes('Prezado(a) *Ana*'));
   assert.ok(msgSingular.includes('imprescindível o preenchimento para a emissão do seu certificado.'));
   assert.ok(msgSingular.includes('Link: https://certificadoies.com.br/solicitacoes/token456'));
+  assert.ok(msgSingular.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
 
   const msgPlural = montarMensagemLembreteDiario({
     nome: 'Ana Beatriz Souza',
@@ -65,18 +67,20 @@ test('Zionic Templates: 3ª mensagem (Últimas 24h) alerta sobre prazo de 24 hor
   assert.ok(msg.includes('nas próximas 24 horas, as solicitações serão canceladas'));
   assert.ok(msg.includes('portal do aluno'));
   assert.ok(msg.includes('Link: https://certificadoies.com.br/solicitacoes/token789'));
+  assert.ok(msg.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
 });
 
-test('Zionic Templates: 4ª mensagem (96h Expirado) informa falta de interação e concordância singular/plural', () => {
+test('Zionic Templates: 4ª mensagem (96h Expirado) informa falta de interatividade e concordância singular/plural', () => {
   const msgSingular = montarMensagemExpirado({
     nome: 'Roberto Santos',
     cursos: ['Psicopedagogia']
   });
 
-  assert.ok(msgSingular.includes('Prezado(a) *Roberto*, por falta de interação, sua solicitação de certificado referente ao curso:'));
+  assert.ok(msgSingular.includes('Prezado(a) *Roberto*, por falta de interatividade, sua solicitação de certificado referente ao curso:'));
   assert.ok(msgSingular.includes('• *Psicopedagogia*'));
   assert.ok(msgSingular.includes('foi cancelada.'));
   assert.ok(msgSingular.includes('portal do aluno e será enviado um novo formulário.'));
+  assert.ok(msgSingular.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
 
   const msgPlural = montarMensagemExpirado({
     nome: 'Roberto Santos',
