@@ -518,14 +518,18 @@ export async function obterOuCriarConversa({ contactId, telefone, instanceId = n
  * Envia uma mensagem em uma conversa aberta no Zionic
  */
 export async function enviarMensagemConversa({ conversationId, mensagem }) {
-  const { apiUrl } = obterConfigZionic();
+  const headers = await obterHeadersZionic();
+  const { apiUrl, userId } = obterConfigZionic();
   const customMessageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
   const url = `${apiUrl}/api/chat/conversations/${encodeURIComponent(conversationId)}/send`;
   console.log(`🌐 [ZIONIC] Enviando mensagem na conversa ${conversationId}...`);
 
   const payload = {
+    conversationId,
+    message: mensagem,
     content: mensagem,
+    userId,
     message_type: 'text',
     metadata: {
       message_source: 'api',
@@ -539,7 +543,6 @@ export async function enviarMensagemConversa({ conversationId, mensagem }) {
     customMessageId: customMessageId
   };
 
-  const headers = await obterHeadersZionic();
   const res = await fetch(url, {
     method: 'POST',
     headers,
