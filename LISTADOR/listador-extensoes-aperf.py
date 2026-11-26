@@ -8,7 +8,12 @@ import sys
 import unicodedata
 import gspread
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    FUSO_BRASILIA = ZoneInfo("America/Sao_Paulo")
+except Exception:
+    FUSO_BRASILIA = timezone(timedelta(hours=-3))
 import calendar
 import re
 from oauth2client.service_account import ServiceAccountCredentials
@@ -90,6 +95,22 @@ def formatar_data(data_iso):
     if not data_iso or data_iso == "N/A": return "N/A"
     try: return datetime.strptime(data_iso[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
     except: return data_iso[:10]
+
+def formatar_data_nascimento(bdate_raw):
+    if not bdate_raw:
+        return ""
+    s = str(bdate_raw).strip()
+    # Se vier com horário e fuso (ex: '1976-11-06T02:59:59.999Z'), converte de UTC para America/Sao_Paulo
+    if "T" in s and (s.endswith("Z") or "+" in s[10:] or "-" in s[10:]):
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.astimezone(FUSO_BRASILIA).strftime("%d/%m/%Y")
+        except Exception:
+            pass
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except Exception:
+        return s[:10]
 
 def calcular_previsao_termino(data_inicio_str, meses_para_add):
     if not data_inicio_str or data_inicio_str == "N/A" or not meses_para_add: return "N/A"
@@ -523,10 +544,7 @@ def executar_rotina_automatizada(session_id=None):
                         
                         bdate_raw = dt_aluno.get("birthDate") or ""
                         if bdate_raw:
-                            try:
-                                data_nascimento = datetime.strptime(bdate_raw[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                            except:
-                                data_nascimento = bdate_raw[:10]
+                            data_nascimento = formatar_data_nascimento(bdate_raw)
                                 
                         u = dt_aluno.get("user")
                         if isinstance(u, dict):
