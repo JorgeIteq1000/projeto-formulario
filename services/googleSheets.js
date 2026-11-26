@@ -783,6 +783,33 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     }
 
     if (!dryRun && updates.length) {
+      const colNecessarias = Math.max(colDataIdx, colStatusIdx, colTotalIdx) + 1;
+      try {
+        const meta = await sheets.spreadsheets.get({
+          spreadsheetId,
+          fields: 'sheets.properties(sheetId,title,gridProperties.columnCount)'
+        });
+        const abaMeta = (meta?.data?.sheets || []).find((s) => s.properties?.title === nomeAba);
+        const colAtual = abaMeta?.properties?.gridProperties?.columnCount || 0;
+        if (abaMeta?.properties?.sheetId !== undefined && colAtual > 0 && colNecessarias > colAtual && typeof sheets.spreadsheets.batchUpdate === 'function') {
+          await sheets.spreadsheets.batchUpdate({
+            spreadsheetId,
+            resource: {
+              requests: [{
+                appendDimension: {
+                  sheetId: abaMeta.properties.sheetId,
+                  dimension: 'COLUMNS',
+                  length: colNecessarias - colAtual
+                }
+              }]
+            }
+          });
+          console.log(`➕ [GOOGLE SHEETS] Aba "${nomeAba}" expandida automaticamente de ${colAtual} para ${colNecessarias} colunas.`);
+        }
+      } catch (errExpand) {
+        console.warn(`⚠️  Aviso ao verificar/expandir colunas da aba "${nomeAba}": ${errExpand.message}`);
+      }
+
       const TAMANHO_LOTE = 500;
       for (let i = 0; i < updates.length; i += TAMANHO_LOTE) {
         await sheets.spreadsheets.values.batchUpdate({
