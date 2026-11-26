@@ -438,12 +438,15 @@ export async function garantirContatoZionic({ nome, telefone, email = null, nota
 }
 
 /**
- * Busca conversas existentes pelo número de telefone do contato
+ * Busca conversas existentes pelo número de telefone do contato,
+ * restringindo à instância/integração configurada para evitar disparos por outro número.
  */
-export async function buscarConversaPorTelefone(telefone) {
-  const { apiUrl, companyId } = obterConfigZionic();
+export async function buscarConversaPorTelefone(telefone, { whatsappInstanceId = null, integrationId = null } = {}) {
+  const cfg = obterConfigZionic();
+  const targetWhatsappId = whatsappInstanceId || cfg.whatsappInstanceId;
+  const targetIntegrationId = integrationId || cfg.integrationId;
   const telFormatado = normalizarTelefoneZionic(telefone);
-  const url = `${apiUrl}/api/chat/conversations?company_id=${encodeURIComponent(companyId)}&search=${encodeURIComponent(telFormatado)}`;
+  const url = `${cfg.apiUrl}/api/chat/conversations?company_id=${encodeURIComponent(cfg.companyId)}&search=${encodeURIComponent(telFormatado)}`;
   const headers = await obterHeadersZionic();
 
   const res = await fetch(url, {
@@ -456,20 +459,32 @@ export async function buscarConversaPorTelefone(telefone) {
     throw new Error(json?.message || json?.error || 'Erro ao buscar conversas');
   }
 
-  const conversas = json.data || [];
-  return conversas.find(c => normalizarTelefoneZionic(c.contact_phone) === telFormatado) || conversas[0] || null;
+  const conversas = (json.data || []).filter(
+    (c) => normalizarTelefoneZionic(c.contact_phone) === telFormatado
+  );
+
+  // Só reaproveita conversa que pertença à instância/integração configurada (ex: ATENDIMENTO LEADS 1)
+  return conversas.find(
+    (c) =>
+      (targetWhatsappId && c.whatsapp_instance_id === targetWhatsappId) ||
+      (targetIntegrationId && c.integration_id === targetIntegrationId)
+  ) || null;
 }
 
 /**
- * Inicia ou localiza uma conversa para um contato
+ * Inicia ou localiza uma conversa para um contato na instância configurada
  */
 export async function obterOuCriarConversa({ contactId, telefone, instanceId = null }) {
   const { apiUrl, companyId, whatsappInstanceId, integrationId } = obterConfigZionic();
   const telFormatado = normalizarTelefoneZionic(telefone);
+  const instId = instanceId || integrationId || whatsappInstanceId;
 
-  // 1. Tenta buscar conversa existente
+  // 1. Tenta buscar conversa existente NA MESMA instância configurada
   if (telFormatado) {
-    const existente = await buscarConversaPorTelefone(telFormatado);
+    const existente = await buscarConversaPorTelefone(telFormatado, {
+      whatsappInstanceId,
+      integrationId: instanceId || integrationId
+    });
     if (existente && existente.conversation_id) {
       return {
         sucesso: true,
@@ -480,8 +495,7 @@ export async function obterOuCriarConversa({ contactId, telefone, instanceId = n
     }
   }
 
-  // 2. Se não existir, cria nova conversa (Zionic espera integration_id no campo instance_id)
-  const instId = instanceId || integrationId || whatsappInstanceId;
+  // 2. Se não existir conversa nessa instância, cria uma nova na instância configurada
   const url = `${apiUrl}/api/chat/conversations`;
   console.log(`🌐 [ZIONIC] Abrindo nova conversa para contact_id ${contactId} na instância ${instId}...`);
   const headers = await obterHeadersZionic();
