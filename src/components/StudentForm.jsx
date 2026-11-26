@@ -56,6 +56,7 @@ export default function StudentForm({ token }) {
 
   // Atualização cadastral no portal do aluno: null | 'atualizou' | 'nao_necessario'
   const [atualizacaoCadastral, setAtualizacaoCadastral] = useState(null);
+  const [linkAtualizadoConcluido, setLinkAtualizadoConcluido] = useState(false);
   const [modalAtualizarAberto, setModalAtualizarAberto] = useState(false);
   const [atualizandoLink, setAtualizandoLink] = useState(false);
   const [erroAtualizacao, setErroAtualizacao] = useState('');
@@ -273,9 +274,13 @@ export default function StudentForm({ token }) {
 
   // Validação: se atua na Rede Municipal, a data da última evolução é OBRIGATÓRIA
   // e deve respeitar o limite de 17 meses retroativos.
-  // Exige também que o aluno tenha marcado "Não foi necessário atualização cadastral".
+  // Libera envio quando marcar "Não foi necessário atualização cadastral" OU após concluir "Atualizar Link".
+  const cadastroLiberado =
+    atualizacaoCadastral === 'nao_necessario' ||
+    (atualizacaoCadastral === 'atualizou' && linkAtualizadoConcluido);
+
   const formularioValido =
-    atualizacaoCadastral === 'nao_necessario' &&
+    cadastroLiberado &&
     professor !== null &&
     (professor === false || Boolean(dataEvolucao)) &&
     validacaoEvolucao.valida &&
@@ -288,6 +293,9 @@ export default function StudentForm({ token }) {
     setErroAtualizacao('');
     if (valor === 'nao_necessario') {
       setModalAtualizarAberto(false);
+    } else if (valor === 'atualizou' && atualizacaoCadastral !== 'atualizou') {
+      setLinkAtualizadoConcluido(false);
+      setSucessoAtualizacao('');
     }
   };
 
@@ -307,9 +315,9 @@ export default function StudentForm({ token }) {
       } else {
         setDados((prev) => (prev ? { ...prev, ...json.dados } : json.dados));
         setModalAtualizarAberto(false);
-        setAtualizacaoCadastral(null);
+        setLinkAtualizadoConcluido(true);
         setSucessoAtualizacao(
-          'Dados atualizados com sucesso! Confira suas informações acima e selecione "Não foi necessário atualização cadastral" para prosseguir.'
+          'Dados atualizados com sucesso a partir do Portal do Aluno! Confira suas informações acima e siga normalmente com o envio.'
         );
       }
     } catch {
