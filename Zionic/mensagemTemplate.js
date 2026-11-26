@@ -1,10 +1,11 @@
 /**
  * Módulo de Templates de Mensagem do Zionic para Emissão de Certificados
- * Suporta régua completa de comunicação:
- * 1. D0 (Boas-vindas e link inicial de 96h)
- * 2. Lembrete Diário (a cada 24h enquanto pendente)
- * 3. Alerta Crítico (faltando 2 horas para expirar)
- * 4. Aviso de Expirado (96h atingidas / cancelamento)
+ *
+ * Régua completa de comunicação (com concordância singular/plural):
+ * 1. 1ª Mensagem (D0): Boas-vindas com link seguro de preenchimento.
+ * 2. 2ª Mensagem (Lembrete): Cobrança educada enquanto pendente.
+ * 3. 3ª Mensagem (Últimas 24h): Aviso de cancelamento caso não preencha nas próximas 24 horas.
+ * 4. 4ª Mensagem (96h - Expirado): Confirmação de cancelamento por falta de interação.
  */
 
 function extrairPrimeiroNome(nome) {
@@ -34,87 +35,77 @@ function formatarListaCursos(cursos = []) {
 }
 
 /**
- * 1. Mensagem Inicial D0 (Boas-vindas)
+ * 1ª Mensagem (D0 - Recebimento da solicitação)
  */
 export function montarMensagemCertificado({ nome, cursos = [], linkUrl }) {
   const primeiroNome = extrairPrimeiroNome(nome);
   const { plural, listaCursosTexto } = formatarListaCursos(cursos);
 
-  return `Olá, *${primeiroNome}*! 👋
-
-Identificamos a sua solicitação para a emissão ${plural ? 'dos certificados' : 'do certificado'} ${plural ? 'dos seguintes cursos' : 'do seguinte curso'}:
+  return `Prezado(a) *${primeiroNome}*, recebemos ${
+    plural
+      ? 'suas solicitações de certificados referentes aos cursos'
+      : 'sua solicitação de certificado referente ao curso'
+  }:
 
 ${listaCursosTexto}
 
-Para concluir a sua solicitação e conferir as datas pedagógicas programadas, por favor acesse o seu link seguro abaixo:
-👉 ${linkUrl}
+Clique no link abaixo e preencha as informações para que possamos dar continuidade ${
+    plural ? 'às suas solicitações' : 'à sua solicitação'
+  }:
 
-⚠️ *Atenção:* O prazo para confirmação do formulário é de *96 horas*.
+Link: ${linkUrl}
 
-Caso tenha alguma dúvida, basta responder a esta mensagem.`;
+A falta de preenchimento ocasionará o cancelamento ${plural ? 'das solicitações' : 'da solicitação'}.`;
 }
 
 /**
- * 2. Lembrete Diário (a cada 24h de pendência)
+ * 2ª Mensagem (Lembrete Diário enquanto pendente)
  */
-export function montarMensagemLembreteDiario({ nome, cursos = [], linkUrl, horasRestantes = 72 }) {
+export function montarMensagemLembreteDiario({ nome, cursos = [], linkUrl }) {
   const primeiroNome = extrairPrimeiroNome(nome);
-  const { plural, listaCursosTexto } = formatarListaCursos(cursos);
-  const horasFormatadas = Math.max(1, Math.round(horasRestantes));
+  const { plural } = formatarListaCursos(cursos);
 
-  return `Olá, *${primeiroNome}*! Tudo bem? 📚
+  return `Prezado(a) *${primeiroNome}*, até o momento não recebemos a resposta do seu formulário. É imprescindível o preenchimento para a emissão ${
+    plural ? 'dos seus certificados' : 'do seu certificado'
+  }.
 
-Passando para lembrar que a sua solicitação para emissão ${plural ? 'dos certificados' : 'do certificado'} ainda aguarda confirmação:
-
-${listaCursosTexto}
-
-Ainda dá tempo de conferir e confirmar suas datas pelo seu link exclusivo:
-👉 ${linkUrl}
-
-⏳ Restam aproximadamente *${horasFormatadas} horas* para a conclusão do prazo de 96h. Após esse período, o link expira e a solicitação é cancelada automaticamente.
-
-Qualquer dúvida, estamos à disposição!`;
+Link: ${linkUrl}`;
 }
 
 /**
- * 3. Alerta Crítico (Faltando ~2 horas para as 96h)
+ * 3ª Mensagem (Últimas 24h antes do cancelamento automático)
  */
 export function montarMensagemAlerta2Horas({ nome, cursos = [], linkUrl }) {
   const primeiroNome = extrairPrimeiroNome(nome);
-  const { plural, listaCursosTexto } = formatarListaCursos(cursos);
+  const { plural } = formatarListaCursos(cursos);
 
-  return `🚨 *ATENÇÃO: ÚLTIMAS 2 HORAS* 🚨
+  return `Prezado(a) *${primeiroNome}*, consta pendente o preenchimento do formulário enviado. Caso o preenchimento não seja realizado nas próximas 24 horas, ${
+    plural ? 'as solicitações serão canceladas' : 'a solicitação será cancelada'
+  } e, se houver interesse na certificação, será necessário realizar ${
+    plural ? 'novas solicitações' : 'uma nova solicitação'
+  } em seu portal do aluno.
 
-Olá, *${primeiroNome}*!
-
-Identificamos que restam *menos de 2 horas* para o encerramento definitivo do prazo de 96h da sua solicitação ${plural ? 'dos certificados' : 'do certificado'}:
-
-${listaCursosTexto}
-
-Para evitar o cancelamento automático do seu pedido no sistema, acesse agora mesmo e confirme:
-👉 ${linkUrl}
-
-⚠️ Ao término do prazo, este link será desativado permanentemente.`;
+Link: ${linkUrl}`;
 }
 
 /**
- * 4. Aviso de Expirado / Cancelamento (96h concluídas)
+ * 4ª Mensagem (96h - Solicitação cancelada por falta de interação)
  */
 export function montarMensagemExpirado({ nome, cursos = [] }) {
   const primeiroNome = extrairPrimeiroNome(nome);
   const { plural, listaCursosTexto } = formatarListaCursos(cursos);
 
-  return `❌ *SOLICITAÇÃO EXPIRADA*
-
-Olá, *${primeiroNome}*.
-
-Informamos que o prazo institucional de 96 horas para confirmação ${plural ? 'dos certificados' : 'do certificado'} abaixo encerrou:
+  return `Prezado(a) *${primeiroNome}*, por falta de interação, ${
+    plural
+      ? 'suas solicitações de certificados referentes aos cursos'
+      : 'sua solicitação de certificado referente ao curso'
+  }:
 
 ${listaCursosTexto}
 
-O seu link de acesso foi desativado e a solicitação foi cancelada no sistema de emissão.
+${plural ? 'foram canceladas' : 'foi cancelada'}.
 
-📌 *O que fazer agora?*
-Caso ainda deseje receber ${plural ? 'os certificados' : 'o certificado'}, será necessário abrir uma nova solicitação diretamente pelo seu *Portal do Aluno*.`;
+Caso ainda tenha interesse, realize ${
+    plural ? 'novas solicitações' : 'uma nova solicitação'
+  } em seu portal do aluno e será enviado um novo formulário.`;
 }
-

@@ -293,18 +293,19 @@ export async function executarReguaWhatsApp({
       mensagem = montarMensagemExpirado({ nome, cursos });
       proximoStatus = 'EXPIRADO';
     }
-    // 3. ALERTA CRÍTICO (Faltando <= 2 horas e ainda não recebeu alerta de 2h nem expirou)
-    else if (horasRestantes <= 2 && horasRestantes > 0 && statusAtual !== 'ALERTA_2H' && statusAtual !== 'EXPIRADO') {
-      etapa = 'ALERTA_2H';
+    // 3. ALERTA FINAL (Últimas 24h antes de expirar as 96h e ainda não recebeu o aviso final)
+    else if (horasRestantes <= 24 && horasRestantes > 0 && statusAtual !== 'ALERTA_24H' && statusAtual !== 'ALERTA_2H' && statusAtual !== 'EXPIRADO') {
+      etapa = 'ALERTA_24H';
       mensagem = montarMensagemAlerta2Horas({ nome, cursos, linkUrl: linkAtual });
-      proximoStatus = 'ALERTA_2H';
+      proximoStatus = 'ALERTA_24H';
     }
-    // 4. LEMBRETE DIÁRIO (Passou >= 24h desde o último envio e faltam mais de 2h para as 96h)
+    // 4. LEMBRETE DIÁRIO (Passou >= 24h desde o último envio e faltam mais de 24h para as 96h)
     else if (
-      horasRestantes > 2 &&
+      horasRestantes > 24 &&
       horasDesdeUltimoEnvio !== null &&
       horasDesdeUltimoEnvio >= 24 &&
       statusAtual !== 'EXPIRADO' &&
+      statusAtual !== 'ALERTA_24H' &&
       statusAtual !== 'ALERTA_2H'
     ) {
       novoTotalLembretes = totalLembretes + 1;
