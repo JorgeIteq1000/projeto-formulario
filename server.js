@@ -712,14 +712,16 @@ app.post('/api/link/:token/atualizar-dados', async (req, res) => {
     if (dadosLyra.nacionalidade) link.naturalidade = dadosLyra.nacionalidade;
     if (dadosLyra.dataNascimento) link.dataNascimento = dadosLyra.dataNascimento;
 
-    const cpfLink = limparCpf(link.cpf);
-    for (const item of base) {
-      if (limparCpf(item.cpf) === cpfLink) {
-        if (dadosLyra.nome) item.nome = dadosLyra.nome;
-        if (dadosLyra.telefone) item.telefone = dadosLyra.telefone;
-        if (dadosLyra.rg !== undefined && dadosLyra.rg !== '') item.rg = dadosLyra.rg;
-        if (dadosLyra.nacionalidade) item.naturalidade = dadosLyra.nacionalidade;
-        if (dadosLyra.dataNascimento) item.dataNascimento = dadosLyra.dataNascimento;
+    // Mantém em memória os demais links do mesmo aluno (CPF) em sincronia
+    const soDigitos = (v) => String(v || '').replace(/\D/g, '');
+    const cpfLink = soDigitos(link.cpf);
+    for (const outro of links.values()) {
+      if (outro !== link && soDigitos(outro.cpf) === cpfLink) {
+        if (dadosLyra.nome) outro.nome = dadosLyra.nome;
+        if (dadosLyra.telefone) outro.telefone = dadosLyra.telefone;
+        if (dadosLyra.rg !== undefined && dadosLyra.rg !== '') outro.rg = dadosLyra.rg;
+        if (dadosLyra.nacionalidade) outro.naturalidade = dadosLyra.nacionalidade;
+        if (dadosLyra.dataNascimento) outro.dataNascimento = dadosLyra.dataNascimento;
       }
     }
 
