@@ -60,8 +60,17 @@ export async function criarCardAlunoSPA({
 
   const endpoint = `${webhookUrl}/crm.item.add`;
 
+  const formatarDataBrSimples = (val) => {
+    const s = String(val || '').trim();
+    if (!s) return '';
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+  };
+
   // Monta a lista de cursos empilhados (um embaixo do outro com \n)
   // Filtra cursos cancelados (caso passem objetos de períodos com cancelado: true)
+  // Formato quando houver datas: "NOME DO CURSO - DD/MM/AAAA - DD/MM/AAAA"
   let listaCursos = [];
   if (Array.isArray(cursos)) {
     listaCursos = cursos
@@ -70,7 +79,22 @@ export async function criarCardAlunoSPA({
         if (typeof c === 'string') return c.trim();
         // Não inclui cursos cancelados por data futura
         if (c.cancelado || c.ultrapassaHoje) return null;
-        return (c.curso || '').trim();
+        const nomeCurso = (c.curso || '').trim();
+        if (!nomeCurso) return null;
+
+        const ehCustomizado = c.aceite === 'Não Aceito' || c.customizado === true;
+        const ini = formatarDataBrSimples(
+          ehCustomizado
+            ? (c.dataInicioCustomizadaFormatada || c.dataInicioFormatada || c.dataInicioCustomizada || c.dataInicio)
+            : (c.dataInicioFormatada || c.dataInicio)
+        );
+        const fim = formatarDataBrSimples(
+          ehCustomizado
+            ? (c.dataFimCustomizadaFormatada || c.dataFimFormatada || c.dataFimCustomizada || c.dataFim)
+            : (c.dataFimFormatada || c.dataFim)
+        );
+
+        return ini && fim ? `${nomeCurso} - ${ini} - ${fim}` : nomeCurso;
       })
       .filter(Boolean);
   }
