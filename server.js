@@ -702,7 +702,7 @@ app.post('/api/link/:token/atualizar-dados', async (req, res) => {
   try {
     const dadosLyra = await consultarDadosAlunoLyraPorCpf(link.cpf);
 
-    if (!GOOGLE_SHEET_SOMENTE_LEITURA) {
+    if (!SHEET_SOMENTE_LEITURA) {
       await atualizarDadosCadastraisAlunoNoSheet(dadosLyra);
     }
 
