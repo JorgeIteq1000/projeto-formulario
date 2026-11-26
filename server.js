@@ -536,13 +536,30 @@ async function carregarBase() {
 
     // Se na planilha já consta como EMITIR ou com Protocolo preenchido, hidrata respostas em memória
     if (!respostas.has(token) && statusOriginalPlanilha === 'EMITIR') {
-      respostas.set(token, {
-        protocolo: protocoloPlanilha || 'EMITIR',
-        dataSubmissao: new Date().toISOString(),
-        dataSubmissaoFormatada: inseridoPlanilhaEm || new Date().toLocaleString('pt-BR'),
-        statusBitrix: 'EMITIR',
-        origemPlanilha: true
-      });
+      const respostaJsonRaw = primeiroPreenchido('respostaJson');
+      let respostaHidratada = null;
+      if (respostaJsonRaw) {
+        try {
+          respostaHidratada = JSON.parse(respostaJsonRaw);
+        } catch {
+          respostaHidratada = null;
+        }
+      }
+      if (respostaHidratada && typeof respostaHidratada === 'object') {
+        respostas.set(token, {
+          ...respostaHidratada,
+          protocolo: respostaHidratada.protocolo || protocoloPlanilha || 'EMITIR',
+          statusBitrix: respostaHidratada.statusBitrix || 'EMITIR'
+        });
+      } else {
+        respostas.set(token, {
+          protocolo: protocoloPlanilha || 'EMITIR',
+          dataSubmissao: new Date().toISOString(),
+          dataSubmissaoFormatada: inseridoPlanilhaEm || new Date().toLocaleString('pt-BR'),
+          statusBitrix: 'EMITIR',
+          origemPlanilha: true
+        });
+      }
     }
   }
 

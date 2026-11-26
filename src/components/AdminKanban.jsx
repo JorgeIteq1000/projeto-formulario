@@ -263,7 +263,7 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
               </div>
             )}
 
-            {item.resposta.periodosSugeridos?.length > 0 && (
+            {item.resposta.periodosSugeridos?.length > 0 ? (
               <div style={{ marginTop: 6, fontSize: '0.74rem', background: 'rgba(59, 130, 246, 0.08)', padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(59, 130, 246, 0.2)' }}>
                 <span style={{ fontWeight: 600, color: '#93c5fd', display: 'block', marginBottom: 2 }}>
                   📅 Períodos Sugeridos ({item.resposta.periodosSugeridos.length}):
@@ -286,6 +286,32 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
                     )}
                   </div>
                 ))}
+              </div>
+            ) : item.cursos?.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: '0.74rem', background: 'rgba(59, 130, 246, 0.08)', padding: '6px 8px', borderRadius: 6, border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                <span style={{ fontWeight: 600, color: '#93c5fd', display: 'block', marginBottom: 2 }}>
+                  📚 Cursos da Solicitação ({item.cursos.length}):
+                </span>
+                {item.cursos.map((c, idx) => (
+                  <div key={idx} style={{ color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>
+                    <span>
+                      • <strong>{c.curso}</strong> ({c.tipoCurso}{c.cargaHoraria ? ` • ${c.cargaHoraria}h` : ''})
+                    </span>
+                    {c.certificadora && <span style={{ color: '#94a3b8' }}>• {c.certificadora}</span>}
+                    {c.statusLyra && (
+                      <span style={{ color: '#93c5fd', background: 'rgba(59, 130, 246, 0.15)', padding: '1px 6px', borderRadius: 4, fontSize: '0.68rem' }}>
+                        {c.statusLyra}
+                      </span>
+                    )}
+                  </div>
+                ))}
+                {(item.telefone || item.dataNascimento) && (
+                  <div style={{ color: '#94a3b8', marginTop: 4, fontSize: '0.7rem' }}>
+                    {item.telefone ? `Tel: ${item.telefone}` : ''}
+                    {item.telefone && item.dataNascimento ? ' • ' : ''}
+                    {item.dataNascimento ? `Nasc: ${item.dataNascimento}` : ''}
+                  </div>
+                )}
               </div>
             )}
 

@@ -230,7 +230,7 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
       
       const res = await sheets.spreadsheets.values.get({
         spreadsheetId,
-        range: `'${nomeAba}'!A1:AD`
+        range: `'${nomeAba}'!A1:AF`
       });
 
       const rows = res.data.values || [];
@@ -272,7 +272,8 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
           prazoMinimoConclusao: headersSemAcento.findIndex(h => h.includes('PRAZO MINIMO')),
           statusWhatsApp: headersSemAcento.findIndex(h => h.includes('STATUS WHATSAPP') || h === 'WHATSAPP_STATUS' || h.includes('STATUS ZIONIC')),
           dataUltimoWhatsApp: headersSemAcento.findIndex(h => h.includes('DATA ENVIO WHATSAPP') || h.includes('DATA ULTIMO WHATSAPP') || h === 'WHATSAPP_DATA' || h.includes('DATA WHATSAPP')),
-          totalLembretesWhatsApp: headersSemAcento.findIndex(h => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT')
+          totalLembretesWhatsApp: headersSemAcento.findIndex(h => h.includes('LEMBRETES') || h === 'WHATSAPP_COUNT'),
+          respostaJson: headersSemAcento.findIndex(h => h === 'RESPOSTA_JSON' || h === 'RESPOSTA JSON')
         };
 
         const solicitacoes = [];
@@ -308,7 +309,8 @@ export async function carregarSolicitacoes({ spreadsheetId }) {
             prazoMinimoConclusao: String((idx.prazoMinimoConclusao !== -1 ? r[idx.prazoMinimoConclusao] : r[23]) || '').trim(),
             statusWhatsApp: idx.statusWhatsApp !== -1 ? String(r[idx.statusWhatsApp] || '').trim() : '',
             dataUltimoWhatsApp: idx.dataUltimoWhatsApp !== -1 ? String(r[idx.dataUltimoWhatsApp] || '').trim() : '',
-            totalLembretesWhatsApp: idx.totalLembretesWhatsApp !== -1 ? (Number(r[idx.totalLembretesWhatsApp]) || 0) : 0
+            totalLembretesWhatsApp: idx.totalLembretesWhatsApp !== -1 ? (Number(r[idx.totalLembretesWhatsApp]) || 0) : 0,
+            respostaJson: idx.respostaJson !== -1 ? String(r[idx.respostaJson] || '').trim() : ''
           });
         }
 
@@ -394,6 +396,7 @@ export async function registrarRespostaNoSheet({
     let colProtocoloIdx = headersNorm.findIndex(h => h.includes('PROTOCOLO'));
     const colStatusLyraIdx = headersNorm.findIndex(h => h.includes('STATUS LYRA'));
     const colModStatusIdx = headersNorm.findIndex(h => h.includes('MODIFICACAO DO STATUS'));
+    let colRespostaJsonIdx = headersNorm.findIndex(h => h === 'RESPOSTA_JSON' || h === 'RESPOSTA JSON');
 
     if (colCpfIdx === -1) {
       return { atualizado: false, motivo: 'Coluna CPF não encontrada' };
@@ -401,7 +404,7 @@ export async function registrarRespostaNoSheet({
 
     const rowsRes = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${nomeAba}'!A:AD`
+      range: `'${nomeAba}'!A:AF`
     });
     const rows = rowsRes.data.values || [];
 
@@ -409,6 +412,34 @@ export async function registrarRespostaNoSheet({
     const cpfBuscado = cpfRawLink ? cpfRawLink.padStart(11, '0') : '';
     const protocoloValor = resposta?.protocolo || '';
     const dataModificacaoValor = resposta?.dataSubmissaoFormatada || new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    const temDetalhesResposta = resposta && (
+      resposta.professor !== undefined ||
+      Boolean(resposta.dataEvolucao) ||
+      Boolean(resposta.periodosSugeridos?.length) ||
+      Boolean(resposta.bitrixCardId)
+    );
+    const respostaJsonValor = temDetalhesResposta ? JSON.stringify({
+      protocolo: resposta.protocolo,
+      dataSubmissao: resposta.dataSubmissao,
+      dataSubmissaoFormatada: resposta.dataSubmissaoFormatada,
+      professor: resposta.professor,
+      rede: resposta.rede,
+      prefeituraSP: resposta.prefeituraSP,
+      dataEvolucao: resposta.dataEvolucao,
+      observacao: resposta.observacao,
+      resumoCustomizacao: resposta.resumoCustomizacao,
+      periodosSugeridos: resposta.periodosSugeridos,
+      bitrixCardId: resposta.bitrixCardId,
+      bitrixStageId: resposta.bitrixStageId,
+      emitidoNoLyra: resposta.emitidoNoLyra,
+      emissaoLyra: resposta.emissaoLyra,
+      emitidoEm: resposta.emitidoEm,
+      emitidoPor: resposta.emitidoPor,
+      aguardandoEmissaoManual: resposta.aguardandoEmissaoManual,
+      emissaoModo: resposta.emissaoModo,
+      emissaoAgendadaParaFormatada: resposta.emissaoAgendadaParaFormatada,
+      statusBitrix: resposta.statusBitrix || 'EMITIR'
+    }) : '';
     const updates = [];
     let linhasAfetadas = 0;
 
@@ -419,6 +450,15 @@ export async function registrarRespostaNoSheet({
       updates.push({
         range: `'${nomeAba}'!${letraColProto}1`,
         values: [['Protocolo']]
+      });
+    }
+
+    if (colRespostaJsonIdx === -1 && respostaJsonValor) {
+      colRespostaJsonIdx = Math.max(headers.length, colProtocoloIdx + 1);
+      const letraColResp = idxParaColunaA1(colRespostaJsonIdx);
+      updates.push({
+        range: `'${nomeAba}'!${letraColResp}1`,
+        values: [['RESPOSTA_JSON']]
       });
     }
 
@@ -462,6 +502,15 @@ export async function registrarRespostaNoSheet({
           updates.push({
             range: `'${nomeAba}'!${letraColLyra}${numLinha}`,
             values: [['Aprovado']]
+          });
+        }
+
+        // Grava snapshot JSON dos detalhes do formulário para sobreviver a reinícios/redeploys sem disco persistente
+        if (colRespostaJsonIdx !== -1 && respostaJsonValor) {
+          const letraColResp = idxParaColunaA1(colRespostaJsonIdx);
+          updates.push({
+            range: `'${nomeAba}'!${letraColResp}${numLinha}`,
+            values: [[respostaJsonValor]]
           });
         }
       }
