@@ -206,7 +206,7 @@ export async function obterTokenLyra({ fetchImpl = fetch, forceRefresh = false }
   }
 }
 
-async function requisitarLyra({ method = 'GET', rotaLimpa, body, fetchImpl = fetch }) {
+async function requisitarLyra({ method = 'GET', rotaLimpa, body, extraHeaders = {}, fetchImpl = fetch }) {
   let token = await obterTokenLyra({ fetchImpl });
 
   const executar = async (authToken) => {
@@ -217,7 +217,7 @@ async function requisitarLyra({ method = 'GET', rotaLimpa, body, fetchImpl = fet
     );
     return fetchImpl(url, {
       method,
-      headers: criarHeadersLyra(authToken),
+      headers: { ...criarHeadersLyra(authToken), ...extraHeaders },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(LYRA_TIMEOUT_MS),
     });
@@ -520,4 +520,66 @@ export async function emitirCertificadoLyra(
       }
     }
   });
+}
+
+/**
+ * Converte data de nascimento vinda da API Lyra (UTC ISO ou YYYY-MM-DD)
+ * para DD/MM/AAAA no fuso America/Sao_Paulo, evitando recuo de 1 dia por UTC.
+ */
+export function formatarDataNascimentoLyra(bdateRaw) {
+  if (!bdateRaw) return '';
+  const s = String(bdateRaw).trim();
+  if (s.includes('T') && (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s.slice(10)))) {
+    const dt = new Date(s);
+    if (!Number.isNaN(dt.getTime())) {
+      return new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(dt);
+    }
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (match) {
+    return `${match[3]}/${match[2]}/${match[1]}`;
+  }
+  return s.slice(0, 10);
+}
+
+/**
+ * Consulta isolada dos dados cadastrais de um aluno no Lyra pelo CPF.
+ */
+export async function consultarDadosAlunoLyraPorCpf(cpf, { fetchImpl = fetch } = {}) {
+  const cpfLimpo = limparCpf(cpf).padStart(11, '0');
+  if (!cpfLimpo || cpfLimpo === '00000000000') {
+    throw new Error('CPF inválido para consulta no Lyra.');
+  }
+
+  const json = await requisitarLyra({
+    method: 'GET',
+    rotaLimpa: `students/students/cpf/${cpfLimpo}?populate={}`,
+    extraHeaders: { requestOrigin: 'busca-rapida-pesquisa' },
+    fetchImpl,
+  });
+
+  const dt = json?.data;
+  if (!dt || typeof dt !== 'object') {
+    throw new Error(`Aluno com CPF ${cpfLimpo} não encontrado no Lyra.`);
+  }
+
+  const telefone = String(dt.cellPhone || dt.whatsApp || dt.phone || '').replace(/\D/g, '').trim();
+  const rg = String(dt.identity || dt.rg || '').trim();
+  const nacionalidade = String(dt.nationality || '').trim() || 'Brasileira';
+  const dataNascimento = formatarDataNascimentoLyra(dt.birthDate || '');
+  const nome = String(dt.name || '').trim();
+
+  return {
+    cpf: cpfLimpo,
+    nome,
+    telefone,
+    rg,
+    nacionalidade,
+    dataNascimento,
+  };
 }

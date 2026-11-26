@@ -14,7 +14,9 @@ import {
   CalendarRange,
   Clock,
   IdCard,
-  MapPin
+  MapPin,
+  RefreshCw,
+  X
 } from 'lucide-react';
 import {
   gerarSugestoesPeriodos,
@@ -51,6 +53,13 @@ export default function StudentForm({ token }) {
   const [enviando, setEnviando] = useState(false);
   const [erroEnvio, setErroEnvio] = useState('');
   const [sucesso, setSucesso] = useState(null);
+
+  // Atualização cadastral no portal do aluno: null | 'atualizou' | 'nao_necessario'
+  const [atualizacaoCadastral, setAtualizacaoCadastral] = useState(null);
+  const [modalAtualizarAberto, setModalAtualizarAberto] = useState(false);
+  const [atualizandoLink, setAtualizandoLink] = useState(false);
+  const [erroAtualizacao, setErroAtualizacao] = useState('');
+  const [sucessoAtualizacao, setSucessoAtualizacao] = useState('');
 
   useEffect(() => {
     let ativo = true;
@@ -263,14 +272,53 @@ export default function StudentForm({ token }) {
   }, [listaPeriodosBase, aceitesCursos]);
 
   // Validação: se atua na Rede Municipal, a data da última evolução é OBRIGATÓRIA
-  // e deve respeitar o limite de 17 meses retroativos
+  // e deve respeitar o limite de 17 meses retroativos.
+  // Exige também que o aluno tenha marcado "Não foi necessário atualização cadastral".
   const formularioValido =
+    atualizacaoCadastral === 'nao_necessario' &&
     professor !== null &&
     (professor === false || Boolean(dataEvolucao)) &&
     validacaoEvolucao.valida &&
     customizacoesValidas &&
     !todosCancelados &&
     confirmacao;
+
+  const escolherAtualizacaoCadastral = (valor) => {
+    setAtualizacaoCadastral(valor);
+    setErroAtualizacao('');
+    if (valor === 'nao_necessario') {
+      setModalAtualizarAberto(false);
+    }
+  };
+
+  const executarAtualizacaoLink = async () => {
+    setAtualizandoLink(true);
+    setErroAtualizacao('');
+    setSucessoAtualizacao('');
+    try {
+      const res = await fetch(`/api/link/${encodeURIComponent(token)}/atualizar-dados`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const json = await res.json();
+      if (!res.ok || !json.sucesso) {
+        setErroAtualizacao(json.mensagem || 'Não foi possível atualizar os dados no momento.');
+        setModalAtualizarAberto(false);
+      } else {
+        setDados((prev) => (prev ? { ...prev, ...json.dados } : json.dados));
+        setModalAtualizarAberto(false);
+        setAtualizacaoCadastral(null);
+        setSucessoAtualizacao(
+          'Dados atualizados com sucesso! Confira suas informações acima e selecione "Não foi necessário atualização cadastral" para prosseguir.'
+        );
+      }
+    } catch {
+      setErroAtualizacao('Falha de conexão ao atualizar os dados. Tente novamente.');
+      setModalAtualizarAberto(false);
+    } finally {
+      setAtualizandoLink(false);
+    }
+  };
 
   const enviar = async (e) => {
     e.preventDefault();
@@ -427,16 +475,79 @@ export default function StudentForm({ token }) {
           </div>
         </div>
 
-        {/* Aviso Institucional de Atualização Cadastral e Prazo de 96 Horas (logo abaixo dos dados pessoais) */}
+        {/* Quadro 1: Aviso Institucional de Atualização Cadastral */}
         <div className="sf-notice-card" style={{ marginTop: 14, padding: '14px 16px', borderRadius: 10, borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.05)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
             <AlertTriangle size={20} className="text-amber" />
             <h2 className="sf-section-title" style={{ margin: 0, fontSize: '1.05rem', color: '#fef3c7' }}>
-              Aviso Importante sobre Atualização Cadastral e Prazo
+              Aviso Importante sobre Atualização Cadastral
             </h2>
           </div>
           <p style={{ color: '#cbd5e1', fontSize: '0.875rem', lineHeight: 1.6, margin: 0 }}>
-            Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba "Meus Dados". A falta de finalização do formulário em <strong>96hr</strong>, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno.
+            Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba "Meus Dados".
+          </p>
+        </div>
+
+        {/* Escolha sobre atualização cadastral no portal do aluno */}
+        <div className="sf-cadastro-check" style={{ marginTop: 14 }}>
+          <div className="sf-options sf-options-2" role="radiogroup" aria-label="Status de atualização cadastral">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={atualizacaoCadastral === 'atualizou'}
+              className={`sf-option ${atualizacaoCadastral === 'atualizou' ? 'selected' : ''}`}
+              onClick={() => escolherAtualizacaoCadastral('atualizou')}
+            >
+              Fiz atualizações cadastrais no portal do aluno
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={atualizacaoCadastral === 'nao_necessario'}
+              className={`sf-option ${atualizacaoCadastral === 'nao_necessario' ? 'selected' : ''}`}
+              onClick={() => escolherAtualizacaoCadastral('nao_necessario')}
+            >
+              Não foi necessário atualização cadastral
+            </button>
+          </div>
+
+          {atualizacaoCadastral === 'atualizou' && (
+            <div className="sf-atualizar-link-box animate-fade-in">
+              <button
+                type="button"
+                className="btn btn-primary sf-btn-atualizar-link"
+                onClick={() => setModalAtualizarAberto(true)}
+              >
+                <RefreshCw size={16} /> Atualizar Link
+              </button>
+            </div>
+          )}
+
+          {sucessoAtualizacao && (
+            <div className="sf-atualizar-feedback-ok animate-fade-in">
+              <CheckCircle2 size={16} />
+              <span>{sucessoAtualizacao}</span>
+            </div>
+          )}
+
+          {erroAtualizacao && (
+            <div className="lookup-error animate-fade-in" style={{ marginTop: 10 }}>
+              <AlertCircle size={16} />
+              <span>{erroAtualizacao}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Quadro 2: Aviso sobre Prazo de 96 Horas */}
+        <div className="sf-notice-card" style={{ marginTop: 14, padding: '14px 16px', borderRadius: 10, borderLeft: '4px solid #f59e0b', background: 'rgba(245, 158, 11, 0.05)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <Clock size={20} className="text-amber" />
+            <h2 className="sf-section-title" style={{ margin: 0, fontSize: '1.05rem', color: '#fef3c7' }}>
+              Aviso Importante sobre Prazo
+            </h2>
+          </div>
+          <p style={{ color: '#cbd5e1', fontSize: '0.875rem', lineHeight: 1.6, margin: 0 }}>
+            A falta de finalização do formulário em <strong>96hr</strong>, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno.
           </p>
         </div>
 
@@ -687,6 +798,59 @@ export default function StudentForm({ token }) {
           )}
         </button>
       </section>
+
+      {modalAtualizarAberto && (
+        <div className="sf-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="sf-modal-atualizar-titulo">
+          <div className="sf-modal-card animate-fade-in">
+            <div className="sf-modal-header">
+              <div className="sf-modal-title-wrap">
+                <AlertTriangle size={20} className="text-amber" />
+                <h3 id="sf-modal-atualizar-titulo" className="sf-modal-title">
+                  Atualização Cadastral
+                </h3>
+              </div>
+              <button
+                type="button"
+                className="sf-modal-close"
+                onClick={() => !atualizandoLink && setModalAtualizarAberto(false)}
+                aria-label="Fechar"
+                disabled={atualizandoLink}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="sf-modal-text">
+              Somente se feito atualizações no portal do aluno
+            </p>
+            <div className="sf-modal-actions">
+              <button
+                type="button"
+                className="btn sf-modal-cancel"
+                onClick={() => setModalAtualizarAberto(false)}
+                disabled={atualizandoLink}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={executarAtualizacaoLink}
+                disabled={atualizandoLink}
+              >
+                {atualizandoLink ? (
+                  <>
+                    <div className="spinner-sm" /> Atualizando...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} /> Atualizar Link
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

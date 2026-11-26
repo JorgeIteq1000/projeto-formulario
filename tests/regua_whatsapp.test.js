@@ -5,7 +5,9 @@ import {
   montarMensagemCertificado,
   montarMensagemLembreteDiario,
   montarMensagemAlerta2Horas,
-  montarMensagemExpirado
+  montarMensagemExpirado,
+  montarMensagemFormularioEnviado,
+  montarMensagemCertificadoEmitido
 } from '../Zionic/mensagemTemplate.js';
 import { parseDataHoraFlexivel, sleep } from '../Zionic/reguaWhatsApp.js';
 
@@ -117,4 +119,60 @@ test('sleep: atrasa execução pelo tempo especificado', async () => {
   await sleep(50);
   const t1 = Date.now();
   assert.ok(t1 - t0 >= 40);
+});
+
+test('Zionic Templates: 5ª mensagem (Formulário enviado) orienta sobre portal do aluno e prazo de 02 dias úteis', () => {
+  const msgSingular = montarMensagemFormularioEnviado({
+    nome: 'Claudio Martines',
+    cursos: ['Cultura Digital']
+  });
+  assert.ok(msgSingular.includes('Prezado(a) *Claudio*, recebemos seu formulário de confirmação.'));
+  assert.ok(msgSingular.includes('emissão do certificado'));
+  assert.ok(msgSingular.includes('Solicitações de Certificados'));
+  assert.ok(msgSingular.includes('até 02 dias úteis.'));
+  assert.ok(msgSingular.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
+
+  const msgPlural = montarMensagemFormularioEnviado({
+    nome: 'Claudio Martines',
+    cursos: ['Cultura Digital', 'Alfabetização']
+  });
+  assert.ok(msgPlural.includes('emissão dos certificados'));
+  assert.ok(msgPlural.includes('eles sejam disponibilizados'));
+});
+
+test('Zionic Templates: 6ª mensagem (Após emissão) parabeniza e orienta acesso no portal do aluno', () => {
+  const msgSingular = montarMensagemCertificadoEmitido({
+    nome: 'Ianca Pires',
+    cursos: ['Administração Escolar']
+  });
+  assert.ok(msgSingular.includes('Prezado(a) *Ianca*, é com grande alegria que informamos que o seu certificado solicitado foi emitido e está disponível em seu portal do aluno.'));
+  assert.ok(msgSingular.includes('Parabéns por esta conquista acadêmica!'));
+  assert.ok(msgSingular.includes('ao seu certificado'));
+  assert.ok(msgSingular.includes('os seus certificados solicitados foram emitidos') === false);
+  assert.ok(msgSingular.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
+
+  const msgPlural = montarMensagemCertificadoEmitido({
+    nome: 'Ianca Pires',
+    cursos: ['Administração Escolar', 'Gestão']
+  });
+  assert.ok(msgPlural.includes('os seus certificados solicitados foram emitidos e estão disponíveis'));
+  assert.ok(msgPlural.includes('aos seus certificados'));
+
+  const msgImpPgto = montarMensagemCertificadoEmitido({
+    nome: 'Ianca Pires',
+    cursos: ['O Tempo e o Espaço'],
+    tipoImpressoStatus: 'AGUARDANDO_PAGAMENTO'
+  });
+  assert.ok(msgImpPgto.includes('emitido em formato digital'));
+  assert.ok(msgImpPgto.includes('Financeiro / Cobrança'));
+  assert.ok(msgImpPgto.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
+
+  const msgImpAprov = montarMensagemCertificadoEmitido({
+    nome: 'Ianca Pires',
+    cursos: ['O Tempo e o Espaço'],
+    tipoImpressoStatus: 'APROVADO'
+  });
+  assert.ok(msgImpAprov.includes('emitido em formato digital'));
+  assert.ok(msgImpAprov.includes('Rua Lagoa Taí Grande, 91 - Vila Carmosina, Itaquera - SP, CEP 08290-500'));
+  assert.ok(msgImpAprov.endsWith('*MENSAGEM AUTOMÁTICA, FAVOR NÃO RESPONDER*'));
 });

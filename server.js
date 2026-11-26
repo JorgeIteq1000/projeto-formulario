@@ -7,12 +7,17 @@ import fs from 'fs';
 import os from 'os';
 import dotenv from 'dotenv';
 import { dispararMensagemAlunoZionic } from './Zionic/zionicClient.js';
-import { montarMensagemCertificado } from './Zionic/mensagemTemplate.js';
+import {
+  montarMensagemCertificado,
+  montarMensagemFormularioEnviado,
+  montarMensagemCertificadoEmitido
+} from './Zionic/mensagemTemplate.js';
 import {
   carregarSolicitacoes,
   carregarSolicitacoesCanceladas,
   registrarRespostaNoSheet,
   atualizarStatusLyraNoSheet,
+  atualizarDadosCadastraisAlunoNoSheet,
   inicializarGoogleAuth,
   gravarLinksNaPlanilha
 } from './services/googleSheets.js';
@@ -21,7 +26,11 @@ import { carregarRespostas, salvarRespostas } from './services/respostasStore.js
 import { carregarConfiguracoes, salvarConfiguracoes } from './services/configStore.js';
 import { tipoCursoNoEscopo } from './services/escopo.js';
 import { buscarCargaHoraria } from './services/cargaHoraria.js';
-import { cancelarSolicitacaoLyra, emitirCertificadoLyra } from './services/lyra.js';
+import {
+  cancelarSolicitacaoLyra,
+  emitirCertificadoLyra,
+  consultarDadosAlunoLyraPorCpf
+} from './services/lyra.js';
 import {
   autenticarUsuario,
   criarTokenSessao,
@@ -251,6 +260,34 @@ async function executarEmissaoCursosLyra({ link, cursosParaCertificar = [], jaEm
   return { resultados, falhas, todosEmitidos, emitidosAgora };
 }
 
+async function notificarAlunoZionicSilencioso({ nome, telefone, mensagem, contexto }) {
+  if (SHEET_SOMENTE_LEITURA) return;
+  if (process.env.NODE_ENV === 'test') return;
+  const temCredenciaisZionic = Boolean(
+    (process.env.ZIONIC_BEARER_TOKEN && process.env.ZIONIC_BEARER_TOKEN.trim()) ||
+    (process.env.ZIONIC_EMAIL && process.env.ZIONIC_PASSWORD)
+  );
+  if (!temCredenciaisZionic) return;
+
+  const telLimpo = String(telefone || '').replace(/\D/g, '');
+  if (telLimpo.length < 10) return;
+
+  try {
+    const res = await dispararMensagemAlunoZionic({
+      nome: nome || 'Aluno(a)',
+      telefone: telLimpo,
+      mensagem
+    });
+    if (res?.sucesso) {
+      console.log(`📱 [ZIONIC] Notificação (${contexto}) enviada para ${nome} (${telLimpo}). ID: ${res.data?.id || 'OK'}`);
+    } else {
+      console.warn(`⚠️  [ZIONIC] Falha na notificação (${contexto}) para ${nome}: ${res?.erro || 'erro desconhecido'}`);
+    }
+  } catch (err) {
+    console.warn(`⚠️  [ZIONIC] Exceção na notificação (${contexto}) para ${nome}: ${err.message}`);
+  }
+}
+
 let filaEmissaoRodando = false;
 async function processarFilaEmissaoAutomatica() {
   if (filaEmissaoRodando) return { processados: 0, emitidos: 0, falhas: 0 };
@@ -325,6 +362,16 @@ async function processarFilaEmissaoAutomatica() {
               console.warn(`⚠️  Erro ao atualizar colunas V/W após emissão agendada (${link.nome}): ${err.message}`);
             }
           }
+          await notificarAlunoZionicSilencioso({
+            nome: link.nome,
+            telefone: link.telefone,
+            mensagem: montarMensagemCertificadoEmitido({
+              nome: link.nome,
+              cursos: cursosParaCertificar,
+              tipoImpressoStatus: link.tipoImpressoStatus || null
+            }),
+            contexto: 'certificado_emitido_auto'
+          });
         } else {
           falhas++;
         }
@@ -358,11 +405,26 @@ async function carregarBase() {
     tokensCancelados.set(tok, info);
   }
   ultimaSincronizacaoMs = Date.now();
-  // O formulário atende apenas Extensão e Aperfeiçoamento: demais tipos são ignorados
+  // O formulário atende apenas Extensão e Aperfeiçoamento e gera link SOMENTE para solicitações Digitais.
+  // Solicitações Impressas são preservadas em um mapa paralelo para escolher a mensagem pós-emissão correta.
   const todasLinhas = res.dados || [];
-  const linhas = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso));
+  const linhasEscopo = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso));
+  const ehImpresso = (l) => String(l.tipoCertificado || '').trim().toLowerCase().includes('impresso');
+
+  const impressoPorCpfCurso = new Map();
+  for (const l of linhasEscopo) {
+    if (!ehImpresso(l)) continue;
+    const cpfImp = normalizarCpf(l.cpf);
+    const cursoImp = String(l.curso || '').trim().toUpperCase();
+    if (!cpfImp || !cursoImp) continue;
+    const stLyraNorm = String(l.statusLyra || '').trim().toUpperCase();
+    const tipoImp = stLyraNorm.includes('PAGAMENTO') ? 'AGUARDANDO_PAGAMENTO' : 'APROVADO';
+    impressoPorCpfCurso.set(`${cpfImp}|${cursoImp}`, tipoImp);
+  }
+
+  const linhas = linhasEscopo.filter((l) => !ehImpresso(l));
   if (linhas.length < todasLinhas.length) {
-    console.log(`ℹ️  ${todasLinhas.length - linhas.length} solicitação(ões) ignorada(s) por tipo de curso fora do escopo (apenas Extensão e Aperfeiçoamento).`);
+    console.log(`ℹ️  ${todasLinhas.length - linhas.length} solicitação(ões) filtrada(s) (fora do escopo ou Impresso sem link ao aluno).`);
   }
   totalSolicitacoes = linhas.length;
   statusIntegracao = {
@@ -421,6 +483,19 @@ async function carregarBase() {
     const dataReferencia = maisRecente.toISOString().slice(0, 10);
     const token = gerarToken(cpf, dataReferencia);
 
+    // Verifica se algum dos cursos Digitais deste aluno possui solicitação Impressa vinculada
+    let tipoImpressoStatus = null;
+    for (const c of cursos) {
+      const imp = impressoPorCpfCurso.get(`${cpf}|${String(c.curso || '').trim().toUpperCase()}`);
+      if (imp === 'AGUARDANDO_PAGAMENTO') {
+        tipoImpressoStatus = 'AGUARDANDO_PAGAMENTO';
+        break;
+      }
+      if (imp === 'APROVADO') {
+        tipoImpressoStatus = 'APROVADO';
+      }
+    }
+
     if (itensAtivos.length === 0 && !respostas.has(token)) {
       if (!tokensCancelados.has(token)) {
         tokensCancelados.set(token, {
@@ -455,6 +530,7 @@ async function carregarBase() {
       // Link já gravado na coluna T da planilha (só vale se for deste mesmo token)
       linkPlanilha: ((itens.find((i) => i.link && String(i.link).endsWith(`/${token}`)) || {}).link) || '',
       dataReferencia,
+      tipoImpressoStatus,
       cursos
     });
 
@@ -583,6 +659,73 @@ app.get('/api/link/:token', async (req, res) => {
       respondidoEm: resposta?.dataSubmissaoFormatada || null
     }
   });
+});
+
+// Atualiza de forma isolada os dados cadastrais do aluno no Lyra e na planilha Google Sheets
+app.post('/api/link/:token/atualizar-dados', async (req, res) => {
+  const token = req.params.token;
+  if (!links.has(token) || tokensCancelados.has(token)) {
+    await sincronizarSeNecessario();
+  }
+
+  const link = links.get(token);
+  if (!link && tokensCancelados.has(token)) {
+    return res.status(410).json({
+      sucesso: false,
+      cancelado: true,
+      motivo: 'prazo_96h',
+      mensagem: MENSAGEM_EXPIRADO_96H
+    });
+  }
+
+  if (!link) {
+    return res.status(404).json({ sucesso: false, mensagem: 'Link inválido ou expirado.' });
+  }
+
+  try {
+    const dadosLyra = await consultarDadosAlunoLyraPorCpf(link.cpf);
+
+    if (!GOOGLE_SHEET_SOMENTE_LEITURA) {
+      await atualizarDadosCadastraisAlunoNoSheet(dadosLyra);
+    }
+
+    if (dadosLyra.nome) link.nome = dadosLyra.nome;
+    if (dadosLyra.telefone) link.telefone = dadosLyra.telefone;
+    if (dadosLyra.rg !== undefined && dadosLyra.rg !== '') link.rg = dadosLyra.rg;
+    if (dadosLyra.nacionalidade) link.naturalidade = dadosLyra.nacionalidade;
+    if (dadosLyra.dataNascimento) link.dataNascimento = dadosLyra.dataNascimento;
+
+    const cpfLink = limparCpf(link.cpf);
+    for (const item of base) {
+      if (limparCpf(item.cpf) === cpfLink) {
+        if (dadosLyra.nome) item.nome = dadosLyra.nome;
+        if (dadosLyra.telefone) item.telefone = dadosLyra.telefone;
+        if (dadosLyra.rg !== undefined && dadosLyra.rg !== '') item.rg = dadosLyra.rg;
+        if (dadosLyra.nacionalidade) item.naturalidade = dadosLyra.nacionalidade;
+        if (dadosLyra.dataNascimento) item.dataNascimento = dadosLyra.dataNascimento;
+      }
+    }
+
+    console.log(`🔄 [ATUALIZAR LINK] Dados cadastrais sincronizados no Lyra/Planilha para ${link.nome} (${formatarCpf(link.cpf)}).`);
+
+    return res.json({
+      sucesso: true,
+      mensagem: 'Dados cadastrais atualizados com sucesso a partir do Portal do Aluno.',
+      dados: {
+        nome: link.nome,
+        cpf: formatarCpf(link.cpf),
+        dataNascimento: link.dataNascimento,
+        rg: link.rg,
+        naturalidade: link.naturalidade
+      }
+    });
+  } catch (err) {
+    console.error(`❌ [ATUALIZAR LINK] Erro ao sincronizar dados para CPF ${link.cpf}:`, err.message);
+    return res.status(502).json({
+      sucesso: false,
+      mensagem: 'Não foi possível consultar os dados atualizados no Portal do Aluno no momento. Tente novamente em instantes.'
+    });
+  }
 });
 
 // Envio do formulário pelo aluno
@@ -810,6 +953,27 @@ app.post('/api/link/:token/resposta', async (req, res) => {
   }
 
   console.log(`✅ [BITRIX24/PLANILHA] ${link.nome} (${formatarCpf(link.cpf)}) → ENTRADA ➜ EMITIR | ${registro.protocolo}${registro.bitrixCardId ? ` | Bitrix SPA ID: ${registro.bitrixCardId} (${registro.bitrixStageId})` : ''}`);
+
+  // Disparo assíncrono de confirmação de recebimento do formulário (não bloqueia a resposta ao aluno)
+  notificarAlunoZionicSilencioso({
+    nome: link.nome,
+    telefone: link.telefone,
+    mensagem: montarMensagemFormularioEnviado({ nome: link.nome, cursos: cursosParaCertificar }),
+    contexto: 'formulario_enviado'
+  }).then(() => {
+    if (registro.emitidoNoLyra) {
+      return notificarAlunoZionicSilencioso({
+        nome: link.nome,
+        telefone: link.telefone,
+        mensagem: montarMensagemCertificadoEmitido({
+          nome: link.nome,
+          cursos: cursosParaCertificar,
+          tipoImpressoStatus: link.tipoImpressoStatus || null
+        }),
+        contexto: 'certificado_emitido_imediato'
+      });
+    }
+  });
 
   res.json({
     sucesso: true,
@@ -1218,6 +1382,18 @@ app.post('/api/solicitacoes/:token/emitir', middlewareAutenticacaoAdmin, async (
         resposta: registroAtualizado
       });
     }
+
+    // Disparo assíncrono avisando o aluno que o certificado foi emitido e está no portal
+    notificarAlunoZionicSilencioso({
+      nome: link.nome,
+      telefone: link.telefone,
+      mensagem: montarMensagemCertificadoEmitido({
+        nome: link.nome,
+        cursos: cursosParaCertificar,
+        tipoImpressoStatus: link.tipoImpressoStatus || null
+      }),
+      contexto: 'certificado_emitido_manual'
+    });
 
     return res.json({
       sucesso: true,

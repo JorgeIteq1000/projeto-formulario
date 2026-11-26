@@ -144,6 +144,21 @@ def bater_na_api(rota_limpa, headers, tentativas=3):
         time.sleep(2)
     return None
 
+def finalizar_solicitacao_impressa(id_solic, headers):
+    id_limpo = str(id_solic or "").strip()
+    if not id_limpo or not re.match(r'^[0-9a-fA-F]{24}$', id_limpo):
+        return False
+    url_cripto = criptografar_rota(f"certificates/certificate-solicitations/finished/{id_limpo}")
+    try:
+        res = requests.put(url_cripto, headers=headers, json={"status": "finished"}, timeout=20)
+        if res.status_code == 200:
+            data_json = res.json()
+            return data_json.get("code") == 200 or data_json.get("data", {}).get("status") == "finished"
+        log(f"⚠️ Lyra retornou HTTP {res.status_code} ao finalizar Impressa {id_limpo}: {res.text[:150]}")
+    except Exception as e:
+        log(f"⚠️ Erro ao finalizar solicitação Impressa {id_limpo} no Lyra: {e}")
+    return False
+
 def setup_google_sheets(worksheet_name_param):
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -434,10 +449,27 @@ def executar_rotina_automatizada(session_id=None):
             return res
 
         headers_norm_atual = [normalizar_texto(h) for h in cabecalhos_planilha]
+        col_i_idx = next((i for i, h in enumerate(headers_norm_atual) if "STATUS DO FORMULARIO" in h or "STATUS DO EVENTO" in h), 8)
         col_v_idx = next((i for i, h in enumerate(headers_norm_atual) if "STATUS LYRA" in h), 21)
+        col_w_idx = next((i for i, h in enumerate(headers_norm_atual) if "MODIFICACAO DO STATUS" in h), 22)
         col_x_idx = next((i for i, h in enumerate(headers_norm_atual) if "PRAZO MINIMO" in h), 23)
+        col_i_letra = col_idx_para_a1(col_i_idx)
         col_v_letra = col_idx_para_a1(col_v_idx)
+        col_w_letra = col_idx_para_a1(col_w_idx)
         col_x_letra = col_idx_para_a1(col_x_idx)
+
+        # Mapeia todos os pares CPF|CURSO que já possuem solicitação Digital ativa (na planilha ou nesta rodada)
+        digitais_ativos = set()
+        for chave_ex in chaves_existentes.keys():
+            partes_ch = chave_ex.split("|", 2)
+            if len(partes_ch) == 3 and partes_ch[1] == "DIGITAL":
+                digitais_ativos.add(f"{partes_ch[0]}|{partes_ch[2]}")
+        for r_dig in resultados:
+            if str(r_dig.get("type") or "").lower() == "digital":
+                c_cpf = r_dig.get("dataStudent", {}).get("cpf", "").strip()
+                c_crs = r_dig.get("dataCourse", {}).get("course", "").strip().upper()
+                if c_cpf and c_crs:
+                    digitais_ativos.add(f"{c_cpf}|{c_crs}")
 
         updates_existentes = []
         linhas_planilha = []
@@ -496,19 +528,58 @@ def executar_rotina_automatizada(session_id=None):
                 continue
 
             chave_atual = f"{cpf}|{tipo_certificado.upper()}|{curso.upper()}"
+            tem_digital_correspondente = f"{cpf}|{curso.upper()}" in digitais_ativos
+
             if chave_atual in chaves_existentes:
                 existente = chaves_existentes[chave_atual]
                 row_num = existente["row"]
                 status_form_atual = normalizar_texto(existente["status_form"])
-                # Não sobrescreve Status Lyra se a linha já foi marcada como Cancelado
-                if status_form_atual != "CANCELADO" and existente["status_lyra"] != status_lyra:
-                    updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [[status_lyra]]})
+
+                # Regra de Impresso já existente: se já possui Digital vinculado e Impresso está Aguardando Aprovação, finaliza no Lyra
+                if (
+                    tipo_certificado == "Impresso"
+                    and tem_digital_correspondente
+                    and status_lyra == "Aguardando Aprovação"
+                    and normalizar_texto(existente["status_lyra"]) != "FINALIZADO"
+                    and status_form_atual != "FINALIZADO"
+                    and status_form_atual != "CANCELADO"
+                ):
+                    if finalizar_solicitacao_impressa(solicitacao_id, headers):
+                        agora_fin = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        log(f"✅ [IMPRESSO FINALIZADO] {r.get('dataStudent', {}).get('name', '')} | {curso} (Digital já presente)")
+                        updates_existentes.append({"range": f"{col_i_letra}{row_num}", "values": [["Finalizado"]]})
+                        updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [["Finalizado"]]})
+                        updates_existentes.append({"range": f"{col_w_letra}{row_num}", "values": [[agora_fin]]})
+                        status_lyra = "Finalizado"
+                else:
+                    # Não sobrescreve Status Lyra se a linha já foi marcada como Cancelado ou Finalizado
+                    if status_form_atual not in ("CANCELADO", "FINALIZADO") and existente["status_lyra"] != status_lyra:
+                        updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [[status_lyra]]})
+
                 if (not existente["prazo_min"] or existente["prazo_min"] == "N/A") and previsao_termino and previsao_termino != "N/A":
                     updates_existentes.append({"range": f"{col_x_letra}{row_num}", "values": [[previsao_termino]]})
                 continue
             if solicitacao_id:
                 ids_eventos_existentes.add(solicitacao_id)
             chaves_existentes[chave_atual] = {"row": -1, "status_form": "", "status_lyra": status_lyra, "mod_status": "", "prazo_min": previsao_termino}
+
+            # Define Status do Formulário (Coluna I) e finalização automática se for Impresso
+            status_formulario_novo = "PENDENTE_ENVIO"
+            modificacao_status_novo = ""
+            if tipo_certificado == "Impresso":
+                if tem_digital_correspondente:
+                    if status_lyra == "Aguardando Aprovação":
+                        if finalizar_solicitacao_impressa(solicitacao_id, headers):
+                            status_formulario_novo = "Finalizado"
+                            status_lyra = "Finalizado"
+                            modificacao_status_novo = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                            log(f"✅ [IMPRESSO FINALIZADO] {r.get('dataStudent', {}).get('name', '')} | {curso} (Digital já presente)")
+                        else:
+                            status_formulario_novo = "Aguardando Finalização"
+                    else:
+                        status_formulario_novo = "Aguardando Pagamento"
+                else:
+                    status_formulario_novo = "CRIAR DIGITAL"
             
             nome = r.get("dataStudent", {}).get("name", "")
             tipo_curso = r.get("dataCourse", {}).get("courseType", "")
@@ -571,10 +642,10 @@ def executar_rotina_automatizada(session_id=None):
                 "CURSO": curso,
                 "CERTIFICADORA": certificadora,
                 "CONTRATO": contrato,
-                "STATUS DO EVENTO": "PENDENTE_ENVIO",
-                "STATUS DO FORMULARIO": "PENDENTE_ENVIO",
+                "STATUS DO EVENTO": status_formulario_novo,
+                "STATUS DO FORMULARIO": status_formulario_novo,
                 "STATUS LYRA": status_lyra,
-                "MODIFICACAO DO STATUS": "",
+                "MODIFICACAO DO STATUS": modificacao_status_novo,
                 "ID DO EVENTO": str(r.get("_id") or "N/A"),
                 "DATA CRIACAO EVENTO": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
                 "TELEFONE": telefone,

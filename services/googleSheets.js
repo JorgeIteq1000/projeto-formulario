@@ -908,5 +908,91 @@ export async function atualizarStatusLyraNoSheet({
   }
 }
 
+/**
+ * Atualiza de forma isolada os dados cadastrais (Nome, Telefone, RG, Nacionalidade/Naturalidade, Data de Nascimento)
+ * de todas as linhas de um aluno específico na planilha Google Sheets.
+ */
+export async function atualizarDadosCadastraisAlunoNoSheet(
+  { cpf, nome, telefone, rg, nacionalidade, dataNascimento },
+  { spreadsheetId = process.env.GOOGLE_SHEET_ID, nomeAba = process.env.GOOGLE_SHEET_ABA || 'Extensões e Aperfeiçoamentos' } = {}
+) {
+  try {
+    if (!spreadsheetId) {
+      return { atualizado: false, motivo: 'GOOGLE_SHEET_ID não configurado' };
+    }
+    const { sheets, credenciaisValidas: ok } = inicializarGoogleAuth();
+    if (!ok || !sheets) {
+      return { atualizado: false, motivo: 'Credenciais do Google Sheets não configuradas' };
+    }
+
+    const cpfBuscado = String(cpf || '').replace(/\D/g, '').padStart(11, '0');
+    if (!cpfBuscado || cpfBuscado === '00000000000') {
+      return { atualizado: false, motivo: 'CPF inválido' };
+    }
+
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${nomeAba}'!A:AD`
+    });
+
+    const rows = res.data.values || [];
+    if (rows.length < 2) {
+      return { atualizado: false, motivo: 'Planilha vazia ou sem linhas de dados' };
+    }
+
+    const headersNorm = rows[0].map((h) => semAcento(String(h || '').trim().toUpperCase()));
+    const colCpfIdx = headersNorm.findIndex((h) => h === 'CPF');
+    if (colCpfIdx === -1) return { atualizado: false, motivo: 'Coluna CPF não encontrada' };
+
+    const colNomeIdx = headersNorm.findIndex((h) => h === 'NOME');
+    const colTelIdx = headersNorm.findIndex((h) => h.includes('TELEFONE') || h.includes('WHATSAPP') || h.includes('CELULAR'));
+    const colRgIdx = headersNorm.findIndex((h) => h === 'RG' || h.startsWith('RG ') || h.includes('RG'));
+    const colNacIdx = headersNorm.findIndex((h) => h.includes('NATURALIDADE') || h.includes('NACIONALIDADE'));
+    const colNascIdx = headersNorm.findIndex((h) => h.includes('NASCIMENTO'));
+
+    const updates = [];
+    let linhasAfetadas = 0;
+
+    for (let i = 1; i < rows.length; i++) {
+      const rowCpf = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
+      if (!rowCpf || rowCpf !== cpfBuscado) continue;
+
+      const numLinha = i + 1;
+      linhasAfetadas++;
+
+      if (colNomeIdx !== -1 && nome) {
+        updates.push({ range: `'${nomeAba}'!${idxParaColunaA1(colNomeIdx)}${numLinha}`, values: [[nome]] });
+      }
+      if (colTelIdx !== -1 && telefone) {
+        updates.push({ range: `'${nomeAba}'!${idxParaColunaA1(colTelIdx)}${numLinha}`, values: [[telefone]] });
+      }
+      if (colRgIdx !== -1 && rg !== undefined && rg !== null && String(rg).trim() !== '') {
+        updates.push({ range: `'${nomeAba}'!${idxParaColunaA1(colRgIdx)}${numLinha}`, values: [[rg]] });
+      }
+      if (colNacIdx !== -1 && nacionalidade) {
+        updates.push({ range: `'${nomeAba}'!${idxParaColunaA1(colNacIdx)}${numLinha}`, values: [[nacionalidade]] });
+      }
+      if (colNascIdx !== -1 && dataNascimento) {
+        updates.push({ range: `'${nomeAba}'!${idxParaColunaA1(colNascIdx)}${numLinha}`, values: [[dataNascimento]] });
+      }
+    }
+
+    if (!linhasAfetadas || !updates.length) {
+      return { atualizado: false, motivo: 'Nenhuma linha encontrada para este CPF ou nenhum dado para atualizar' };
+    }
+
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      resource: { valueInputOption: 'USER_ENTERED', data: updates }
+    });
+
+    console.log(`✅ [GOOGLE SHEETS] Dados cadastrais atualizados em ${linhasAfetadas} linha(s) para CPF ${cpfBuscado}`);
+    return { atualizado: true, linhasAfetadas };
+  } catch (err) {
+    console.error('❌ Erro ao atualizar dados cadastrais no Google Sheets:', err.message);
+    return { atualizado: false, erro: err.message };
+  }
+}
+
 
 

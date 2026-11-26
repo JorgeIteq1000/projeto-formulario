@@ -149,7 +149,9 @@ export async function executarReguaWhatsApp({
 
   const res = await carregarSolicitacoes({ spreadsheetId });
   const todasLinhas = res.dados || [];
-  const linhas = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso));
+  // O aluno não recebe link nem cobrança de WhatsApp para solicitação Impressa (apenas Digital)
+  const ehImpresso = (l) => String(l.tipoCertificado || '').trim().toLowerCase().includes('impresso');
+  const linhas = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso) && !ehImpresso(l));
 
   // Agrupa solicitações por CPF
   const porCpf = new Map();

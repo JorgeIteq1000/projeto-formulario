@@ -119,3 +119,83 @@ Caso ainda tenha interesse, realize ${
 
 ${RODAPE_AUTOMATICO}`;
 }
+
+/**
+ * 5ª Mensagem (Confirmação imediata quando o aluno envia o formulário)
+ */
+export function montarMensagemFormularioEnviado({ nome, cursos = [] }) {
+  const primeiroNome = extrairPrimeiroNome(nome);
+  const { plural } = formatarListaCursos(cursos);
+
+  return `Prezado(a) *${primeiroNome}*, recebemos seu formulário de confirmação. Seus dados serão enviados para a emissão ${
+    plural ? 'dos certificados' : 'do certificado'
+  }. Assim que ${
+    plural ? 'estiverem disponíveis, você poderá acessá-los' : 'estiver disponível, você poderá acessá-lo'
+  } através do seu portal do aluno em *"Certificados / Solicitações de Certificados"* e poderá clicar no botão *"Visualizar"*.
+
+O prazo para que ${
+    plural ? 'eles sejam disponibilizados' : 'ele seja disponibilizado'
+  } é de até 02 dias úteis.
+
+${RODAPE_AUTOMATICO}`;
+}
+
+/**
+ * 6ª Mensagem (Após a emissão do certificado no Lyra)
+ * Suporta 3 variações conforme vínculo com solicitação Impressa:
+ * - tipoImpressoStatus: null (apenas Digital)
+ * - tipoImpressoStatus: 'AGUARDANDO_PAGAMENTO' (Impresso não pago -> orienta Financeiro / Cobrança)
+ * - tipoImpressoStatus: 'APROVADO' (Impresso aguardando aprovação/finalizado -> orienta retirada na central)
+ */
+export function montarMensagemCertificadoEmitido({ nome, cursos = [], tipoImpressoStatus = null }) {
+  const primeiroNome = extrairPrimeiroNome(nome);
+  const { plural } = formatarListaCursos(cursos);
+
+  if (tipoImpressoStatus === 'AGUARDANDO_PAGAMENTO') {
+    return `Prezado(a) *${primeiroNome}*, é com grande alegria que informamos que ${
+      plural
+        ? 'os seus certificados solicitados foram emitidos em formato digital e estão disponíveis'
+        : 'o seu certificado solicitado foi emitido em formato digital e está disponível'
+    } em seu portal do aluno. Parabéns por esta conquista acadêmica!
+
+Você tem acesso ${
+      plural ? 'aos seus certificados' : 'ao seu certificado'
+    } através do seu portal do aluno em *"Certificados / Solicitações de Certificados"* e poderá clicar no botão *"Visualizar"*.
+
+Para a emissão ${
+      plural ? 'dos certificados impressos' : 'do certificado impresso'
+    }, é necessário seguir com o pagamento da taxa gerada em seu portal do aluno em *"Financeiro / Cobrança"*.
+
+${RODAPE_AUTOMATICO}`;
+  }
+
+  if (tipoImpressoStatus === 'APROVADO') {
+    return `Prezado(a) *${primeiroNome}*, é com grande alegria que informamos que ${
+      plural
+        ? 'os seus certificados solicitados foram emitidos em formato digital e estão disponíveis'
+        : 'o seu certificado solicitado foi emitido em formato digital e está disponível'
+    } em seu portal do aluno. Parabéns por esta conquista acadêmica!
+
+Você tem acesso ${
+      plural ? 'aos seus certificados digitais' : 'ao seu certificado digital'
+    } através do seu portal do aluno em *"Certificados / Solicitações de Certificados"* e poderá clicar no botão *"Visualizar"*.
+
+A retirada ${
+      plural ? 'dos certificados impressos' : 'do certificado impresso'
+    } está disponível em nossa central: Rua Lagoa Taí Grande, 91 - Vila Carmosina, Itaquera - SP, CEP 08290-500. Nosso horário de atendimento é de Segunda a Sexta, das 09:00 às 17:45h, e aos Sábados, das 08:30 às 15h.
+
+${RODAPE_AUTOMATICO}`;
+  }
+
+  return `Prezado(a) *${primeiroNome}*, é com grande alegria que informamos que ${
+    plural
+      ? 'os seus certificados solicitados foram emitidos e estão disponíveis'
+      : 'o seu certificado solicitado foi emitido e está disponível'
+  } em seu portal do aluno. Parabéns por esta conquista acadêmica!
+
+Você tem acesso ${
+    plural ? 'aos seus certificados' : 'ao seu certificado'
+  } através do seu portal do aluno em *"Certificados / Solicitações de Certificados"* e poderá clicar no botão *"Visualizar"*.
+
+${RODAPE_AUTOMATICO}`;
+}
