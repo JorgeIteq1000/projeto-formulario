@@ -23,7 +23,7 @@ jobs:
   executar-regua-whatsapp:
     name: Régua de Notificações WhatsApp (Zionic)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 55
 
     steps:
       - name: Checkout do Repositório
@@ -53,6 +53,7 @@ jobs:
           ZIONIC_WHATSAPP_INSTANCE_ID: ${{ secrets.ZIONIC_WHATSAPP_INSTANCE_ID }}
           ZIONIC_INTEGRATION_ID: ${{ secrets.ZIONIC_INTEGRATION_ID }}
           INTERVALO_DISPARO_SEGUNDOS: "60"
+          LIMITE_DISPAROS_POR_EXECUCAO: "45"
         run: |
           if [ "${{ github.event.inputs.modo_envio }}" = "simulacao" ]; then
             echo "🔎 Executando em MODO SIMULAÇÃO (Dry-Run solicitado via painel)..."

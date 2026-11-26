@@ -47,6 +47,7 @@ const DISPAROS_LOG_FILE = path.resolve(__dirname, '../data/disparos_whatsapp.jso
 
 // Delay anti-ban padrão: 60 segundos
 const INTERVALO_PADRAO_SEG = Number(process.env.INTERVALO_DISPARO_SEGUNDOS || 60);
+const LIMITE_PADRAO_POR_EXECUCAO = Number(process.env.LIMITE_DISPAROS_POR_EXECUCAO || 0) || null;
 
 export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -118,7 +119,7 @@ function salvarHistoricoLocal(hist) {
 export async function executarReguaWhatsApp({
   enviar = false,
   intervaloSegundos = INTERVALO_PADRAO_SEG,
-  limiteDisparos = null,
+  limiteDisparos = LIMITE_PADRAO_POR_EXECUCAO,
   spreadsheetId = process.env.GOOGLE_SHEET_ID
 } = {}) {
   const agora = new Date();
@@ -377,7 +378,7 @@ export async function executarReguaWhatsApp({
           else if (item.etapa === 'EXPIRADO_96H') relatorio.enviadosExpirado++;
 
           const agoraISO = new Date().toISOString();
-          const agoraFormatado = new Date().toLocaleString('pt-BR');
+          const agoraFormatado = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 
           // Salva histórico local
           historico[item.cpf] = {
@@ -390,13 +391,24 @@ export async function executarReguaWhatsApp({
           };
           salvarHistoricoLocal(historico);
 
-          // Prepara update para a planilha
-          updatesPlanilha.push({
+          // Grava imediatamente na planilha (Coluna I = Enviado, Y = data, Z = status, AA = total)
+          // para evitar envio duplicado caso o workflow seja interrompido antes do fim da fila
+          const updateAluno = {
             cpf: item.cpf,
             statusWhatsApp: item.proximoStatus,
             dataUltimoWhatsApp: agoraFormatado,
             totalLembretes: item.novoTotalLembretes
-          });
+          };
+          try {
+            await gravarStatusWhatsAppNaPlanilha({
+              spreadsheetId,
+              itens: [updateAluno],
+              dryRun: false
+            });
+          } catch (errSheet) {
+            console.warn(`   ⚠️  Falha ao gravar status na planilha para ${item.nome}: ${errSheet.message}`);
+            updatesPlanilha.push(updateAluno);
+          }
 
           relatorio.detalhes.push({
             cpf: item.cpf,
@@ -481,8 +493,10 @@ if (isDirectRun) {
   const enviar = process.argv.includes('--enviar');
   const argIntervalo = process.argv.find((a) => a.startsWith('--intervalo='));
   const intervaloSegundos = argIntervalo ? Number(argIntervalo.split('=')[1]) : INTERVALO_PADRAO_SEG;
+  const argLimite = process.argv.find((a) => a.startsWith('--limite='));
+  const limiteDisparos = argLimite ? Number(argLimite.split('=')[1]) : LIMITE_PADRAO_POR_EXECUCAO;
 
-  executarReguaWhatsApp({ enviar, intervaloSegundos })
+  executarReguaWhatsApp({ enviar, intervaloSegundos, limiteDisparos })
     .then((r) => process.exit(r.erros > 0 && enviar ? 1 : 0))
     .catch((err) => {
       console.error('❌ Erro fatal na régua de WhatsApp:', err);
