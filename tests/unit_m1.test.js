@@ -131,8 +131,11 @@ test('StudentForm.jsx source code conforms to M1 requirements', () => {
   assert.equal(source.includes('<textarea'), false, 'No textarea should exist in StudentForm');
 
   // 2. Must contain the exact institutional notice text with <strong>96hr</strong>
-  const expectedNoticeSnippet = 'Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba "Meus Dados". A falta de finalização do formulário em <strong>96hr</strong>, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno.';
-  assert.equal(source.includes(expectedNoticeSnippet), true, 'Must include exact institutional notice text with <strong>96hr</strong>');
+  // 2. O aviso institucional agora é dividido em 2 quadros (atualização cadastral | prazo de 96h)
+  const noticeCadastral = 'Caso seja necessário atualização ou correção de algum dado pessoal, é necessário que primeiro seja realizada a atualização dentro da sua área do aluno, pois após o envio deste formulário, as informações serão processadas conforme consta em sistema. Os dados devem ser atualizados exclusivamente na área do aluno, aba "Meus Dados".';
+  const noticePrazo = 'A falta de finalização do formulário em <strong>96hr</strong>, ocasionará o cancelamento da solicitação, devendo o aluno, abrir uma nova solicitação dentro da área do aluno.';
+  assert.equal(source.includes(noticeCadastral), true, 'Must include institutional notice about cadastral update');
+  assert.equal(source.includes(noticePrazo), true, 'Must include institutional notice text with <strong>96hr</strong>');
 
   // 3. Must block form when evolution date is invalid (formularioValido includes validacaoEvolucao.valida)
   assert.equal(source.includes('validacaoEvolucao.valida'), true, 'formularioValido must check validacaoEvolucao.valida');

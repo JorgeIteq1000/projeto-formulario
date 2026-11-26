@@ -136,3 +136,32 @@ test('gravarStatusWhatsAppNaPlanilha: marca Enviado (I), grava data na Coluna Y 
   assert.equal(porRange.has("'Extensões e Aperfeiçoamentos'!I3"), false, 'Não deve sobrescrever status EMITIR');
   assert.equal(updates.some((u) => u.range.includes('!V') || u.range.includes('!W') || u.range.includes('!X')), false);
 });
+
+test('registrarRespostaNoSheet / atualizarStatusLyraNoSheet: não sobrescrevem linhas Impresso nem Finalizado/Cancelado do mesmo CPF', async () => {
+  const headers = [
+    'SOLICITAÇÃO', 'CPF', 'NOME', 'TIPO DE CERTIFICADO', 'TIPO DE CURSO',
+    'CURSO', 'CERTIFICADORA', 'CONTRATO', 'STATUS DO FORMULÁRIO', 'ID DO EVENTO',
+    'DATA CRIAÇÃO EVENTO', 'TELEFONE', 'DATA INÍCIO (ISO)', 'CRIAÇÃO MATRÍCULA (ISO)',
+    'USER ID', 'RG', 'NACIONALIDADE', 'DATA DE NASCIMENTO', 'PROTOCOLO', 'LINK',
+    'INSERIDO NA PLANILHA EM', 'STATUS LYRA', 'MODIFICAÇÃO DO STATUS', 'PRAZO MÍNIMO PARA CONCLUSÃO'
+  ];
+  const base = ['25/11/2026', '43777553824', 'Ianca', 'Digital', 'Extensão', 'Curso A', 'Alpha', 'c1', 'PENDENTE_ENVIO', 'N/A',
+    '', '', '', '', '', '', '', '', '', '', '', 'Aguardando Aprovação', '', ''];
+  const digital = [...base];
+  const impresso = [...base]; impresso[3] = 'Impresso'; impresso[8] = 'Aguardando Pagamento'; impresso[21] = 'Aguardando Pagamento';
+  const cancelado = [...base]; cancelado[8] = 'Cancelado'; cancelado[21] = 'Cancelado';
+
+  const { sheets, batches } = criarMockSheets([headers, digital, impresso, cancelado]);
+
+  await registrarRespostaNoSheet({
+    spreadsheetId: 's', token: 't', linkInfo: { cpf: '437.775.538-24' },
+    resposta: { protocolo: 'CERT-1', dataSubmissaoFormatada: '26/11/2026 10:00:00', emitidoNoLyra: true },
+    sheetsOverride: sheets
+  });
+  await atualizarStatusLyraNoSheet({ spreadsheetId: 's', cpf: '43777553824', sheetsOverride: sheets });
+
+  const ranges = batches.flat().map((u) => u.range);
+  assert.ok(ranges.some((r) => r.endsWith('!I2')), 'linha Digital deve ser atualizada');
+  assert.ok(!ranges.some((r) => /![A-Z]+3$/.test(r)), 'linha Impresso não pode ser alterada');
+  assert.ok(!ranges.some((r) => /![A-Z]+4$/.test(r)), 'linha Cancelada não pode ser alterada');
+});

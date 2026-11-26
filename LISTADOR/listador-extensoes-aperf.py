@@ -552,6 +552,14 @@ def executar_rotina_automatizada(session_id=None):
                         updates_existentes.append({"range": f"{col_w_letra}{row_num}", "values": [[agora_fin]]})
                         status_lyra = "Finalizado"
                 else:
+                    # Digital passou a existir mas o Impresso segue sem pagamento: sai de "CRIAR DIGITAL"
+                    if (
+                        tipo_certificado == "Impresso"
+                        and tem_digital_correspondente
+                        and status_form_atual == "CRIAR DIGITAL"
+                        and status_lyra != "Aguardando Aprovação"
+                    ):
+                        updates_existentes.append({"range": f"{col_i_letra}{row_num}", "values": [["Aguardando Pagamento"]]})
                     # Não sobrescreve Status Lyra se a linha já foi marcada como Cancelado ou Finalizado
                     if status_form_atual not in ("CANCELADO", "FINALIZADO") and existente["status_lyra"] != status_lyra:
                         updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [[status_lyra]]})

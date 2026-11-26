@@ -465,7 +465,7 @@ export async function registrarRespostaNoSheet({
     for (let i = 1; i < rows.length; i++) {
       const rowCpfDigits = (rows[i][colCpfIdx] || '').toString().replace(/\D/g, '');
       const rowCpf = rowCpfDigits ? rowCpfDigits.padStart(11, '0') : '';
-      if (rowCpf && rowCpf === cpfBuscado) {
+      if (rowCpf && rowCpf === cpfBuscado && !linhaEhImpressaOuEncerrada(headersNorm, rows[i])) {
         const numLinha = i + 1;
         linhasAfetadas++;
 
@@ -922,6 +922,8 @@ export async function atualizarStatusLyraNoSheet({
     for (let i = 1; i < rows.length; i++) {
       const rowCpf = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
       if (!rowCpf || rowCpf !== cpfBuscado) continue;
+      // Linhas de certificado Impresso (e as já canceladas/finalizadas) têm ciclo próprio: não sobrescrever
+      if (linhaEhImpressaOuEncerrada(headersNorm, rows[i])) continue;
 
       const numLinha = i + 1;
       linhasAfetadas++;
@@ -1045,3 +1047,21 @@ export async function atualizarDadosCadastraisAlunoNoSheet(
 
 
 
+ 
+
+/**
+ * Retorna true quando a linha é de certificado Impresso (ciclo próprio: CRIAR DIGITAL / Aguardando Pagamento /
+ * Finalizado) ou já está Cancelada/Finalizada. Essas linhas nunca devem ser sobrescritas pelo fluxo do Digital.
+ */
+function linhaEhImpressaOuEncerrada(headersNorm, row) {
+  const idxTipo = headersNorm.findIndex((h) => h.includes('TIPO') && h.includes('CERT'));
+  const idxStatusForm = headersNorm.findIndex((h) => h === 'STATUS DO FORMULARIO' || h === 'STATUS DO EVENTO');
+  const idxStatusLyra = headersNorm.findIndex((h) => h.includes('STATUS LYRA'));
+
+  const tipo = idxTipo !== -1 ? semAcento(row[idxTipo] || '') : '';
+  const stForm = idxStatusForm !== -1 ? semAcento(row[idxStatusForm] || '') : '';
+  const stLyra = idxStatusLyra !== -1 ? semAcento(row[idxStatusLyra] || '') : '';
+
+  if (tipo.includes('IMPRESSO')) return true;
+  return ['CANCELADO', 'CANCELADO_96H', 'FINALIZADO'].includes(stForm) || ['CANCELADO', 'FINALIZADO'].includes(stLyra);
+}

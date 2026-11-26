@@ -30,15 +30,14 @@ test('CHALLENGE 1: Character-by-character conformance of Institutional Notice wi
     }
   }
 
-  // Extract notice paragraph in StudentForm.jsx
-  const matchP = formContent.match(/<p style=\{\{ color: '#cbd5e1'[\s\S]*?<\/p>/);
-  assert.ok(matchP, 'StudentForm.jsx must contain the notice paragraph');
+  // Extrai os parágrafos dos 2 quadros de aviso (atualização cadastral + prazo 96h) e concatena na ordem
+  const matchesP = formContent.match(/<p style=\{\{ color: '#cbd5e1'[\s\S]*?<\/p>/g);
+  assert.ok(matchesP && matchesP.length >= 2, 'StudentForm.jsx must contain the two notice paragraphs');
 
-  // Extract the text inside <p>...</p>
-  const innerP = matchP[0]
-    .replace(/^<p[^>]*>/, '')
-    .replace(/<\/p>$/, '')
-    .trim();
+  const innerP = matchesP
+    .slice(0, 2)
+    .map((p) => p.replace(/^<p[^>]*>/, '').replace(/<\/p>$/, '').trim())
+    .join(' ');
 
   // Replace &quot; with " and <strong>96hr</strong> with **96hr** to test exact equivalence
   const normalizedFormText = innerP

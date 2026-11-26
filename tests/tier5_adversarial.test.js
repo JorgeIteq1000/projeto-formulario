@@ -190,7 +190,7 @@ describe('Tier 5 Adversarial Hardening Suite', () => {
         );
         assert.strictEqual(
           stackedCursos,
-          'Gestão Escolar e Liderança\nDocência do Ensino Superior'
+          'Gestão Escolar e Liderança - 01/05/2026 - 01/06/2026\nDocência do Ensino Superior - 01/07/2026 - 01/08/2026'
         );
       } finally {
         globalThis.fetch = originalFetch;

@@ -100,15 +100,17 @@ function preencherLinksNovos() {
     var idxCpf = headers.indexOf('CPF');
     var idxSolic = headers.findIndex(function (h) { return h.indexOf('SOLICITA') !== -1; });
     var idxTipoCurso = headers.findIndex(function (h) { return h.indexOf('TIPO') !== -1 && h.indexOf('CURSO') !== -1; });
+    var idxTipoCertLink = headers.findIndex(function (h) { return h.indexOf('TIPO') !== -1 && h.indexOf('CERT') !== -1; });
     var idxLink = headers.indexOf('LINK');
     if (idxCpf === -1) return;
     if (idxLink === -1) idxLink = 19; // Coluna T
 
-    // Agrupa datas de solicitação por CPF (mesma regra do server.js)
+    // Agrupa datas de solicitação por CPF (mesma regra do server.js: Impresso nunca recebe link)
     var datasPorCpf = {};
     for (var i = 1; i < dados.length; i++) {
       var tipoNorm = idxTipoCurso !== -1 ? semAcento_(dados[i][idxTipoCurso]) : 'EXTENSAO';
       if (tipoNorm.indexOf('EXTENSAO') === -1 && tipoNorm.indexOf('APERFEICOAMENTO') === -1) continue;
+      if (idxTipoCertLink !== -1 && semAcento_(dados[i][idxTipoCertLink]).indexOf('IMPRESSO') !== -1) continue;
 
       var cpf = normalizarCpf_(dados[i][idxCpf]);
       if (!cpf) continue;
@@ -130,6 +132,7 @@ function preencherLinksNovos() {
     var alterou = 0;
     for (var r = 1; r < dados.length; r++) {
       var cpfLinha = normalizarCpf_(dados[r][idxCpf]);
+      if (idxTipoCertLink !== -1 && semAcento_(dados[r][idxTipoCertLink]).indexOf('IMPRESSO') !== -1) continue; // Impresso não recebe link
       var urlEsperada = linkPorCpf[cpfLinha];
       if (!urlEsperada) continue;
 
@@ -244,6 +247,7 @@ function verificarExpiracao96h() {
     var idxProtocolo = headers.findIndex(function (h) { return h.indexOf('PROTOCOLO') !== -1; });
     var idxStatusLyra = headers.indexOf('STATUS LYRA');
     if (idxStatusLyra === -1) idxStatusLyra = 21; // Coluna V
+    var idxTipoCert = headers.findIndex(function (h) { return h.indexOf('TIPO') !== -1 && h.indexOf('CERT') !== -1; });
     var idxModStatus = headers.findIndex(function (h) { return h.indexOf('MODIFICACAO DO STATUS') !== -1; });
     if (idxModStatus === -1) idxModStatus = 22; // Coluna W
     if (idxDataEvento === -1) return;
@@ -259,7 +263,10 @@ function verificarExpiracao96h() {
       var status = idxStatus !== -1 ? semAcento_(linha[idxStatus]) : '';
       var statusLyra = semAcento_(linha[idxStatusLyra]);
       var protocolo = idxProtocolo !== -1 ? String(linha[idxProtocolo] || '').trim() : '';
-      if (status === 'EMITIR' || status === 'CANCELADO' || status === 'CANCELADO_96H' || statusLyra === 'CANCELADO' || protocolo) continue;
+      // Certificado Impresso tem ciclo próprio (CRIAR DIGITAL / Aguardando Pagamento / Finalizado no Lyra): nunca cancelar por 96h
+      var tipoCert = idxTipoCert !== -1 ? semAcento_(linha[idxTipoCert]) : '';
+      if (tipoCert.indexOf('IMPRESSO') !== -1) continue;
+      if (status === 'EMITIR' || status === 'FINALIZADO' || status === 'CANCELADO' || status === 'CANCELADO_96H' || statusLyra === 'CANCELADO' || statusLyra === 'FINALIZADO' || protocolo) continue;
 
       var dtCriacao = parseDataPlanilha_(linha[idxDataEvento]);
       if (!dtCriacao) continue;
