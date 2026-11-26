@@ -740,7 +740,8 @@ app.post('/api/link/:token/atualizar-dados', async (req, res) => {
     console.error(`❌ [ATUALIZAR LINK] Erro ao sincronizar dados para CPF ${link.cpf}:`, err.message);
     return res.status(502).json({
       sucesso: false,
-      mensagem: 'Não foi possível consultar os dados atualizados no Portal do Aluno no momento. Tente novamente em instantes.'
+      mensagem: 'Não foi possível consultar os dados atualizados no Portal do Aluno no momento. Tente novamente em instantes.',
+      detalhe: err.message
     });
   }
 });

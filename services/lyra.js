@@ -163,8 +163,8 @@ export async function obterTokenLyra({ fetchImpl = fetch, forceRefresh = false }
     return loginInFlightPromise;
   }
 
-  const email = process.env.LYRA_EMAIL;
-  const password = process.env.LYRA_PASSWORD;
+  const email = (process.env.LYRA_EMAIL || process.env.EMAIL_ACESSO || '').trim();
+  const password = (process.env.LYRA_PASSWORD || process.env.SENHA_ACESSO || '').trim();
   if (!email || !password) {
     throw new Error('Credenciais do Lyra não configuradas (LYRA_EMAIL / LYRA_PASSWORD).');
   }
