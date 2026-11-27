@@ -2314,6 +2314,25 @@ a.btn-card-primary {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .sf-periodo-card-main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .sf-periodo-info {
+    width: 100%;
+  }
+
+  .sf-periodo-datas {
+    align-self: flex-start;
+    max-width: 100%;
+    white-space: normal;
+  }
 }
 
 .sf-periodo-card:hover {
@@ -2605,6 +2624,8 @@ a.btn-card-primary {
   background: rgba(239, 68, 68, 0.2);
   color: #fca5a5;
   border: 1px solid rgba(239, 68, 68, 0.4);
+  max-width: 100%;
+  white-space: normal;
 }
 
 /* ALERTA DE CANCELAMENTO DETALHADO */
