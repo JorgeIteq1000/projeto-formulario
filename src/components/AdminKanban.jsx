@@ -20,6 +20,8 @@ const formatarData = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
 
 export default function AdminKanban({ estatisticas, onUpdate }) {
   const [itens, setItens] = useState([]);
+  const [criarDigital, setCriarDigital] = useState([]);
+  const [statusOperacional, setStatusOperacional] = useState(null);
   const [integracao, setIntegracao] = useState(estatisticas?.integracao || null);
   const [certificacaoAutomatica, setCertificacaoAutomatica] = useState(
     Boolean(estatisticas?.configuracoes?.certificacaoAutomatica)
@@ -29,7 +31,12 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
   const [ipLocal, setIpLocal] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
+  const [executandoRegua, setExecutandoRegua] = useState(false);
+  const [enviandoWhatsPorToken, setEnviandoWhatsPorToken] = useState({});
   const [busca, setBusca] = useState('');
+  const [filtroRapido, setFiltroRapido] = useState('todos');
+  const [ordenacao, setOrdenacao] = useState('recentes');
+  const [limitePorColuna, setLimitePorColuna] = useState({ entrada: 40, emitir: 40, emitidos: 40 });
   const [toast, setToast] = useState('');
   const [copiado, setCopiado] = useState(null);
 
@@ -40,6 +47,8 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
       const json = await res.json();
       if (json.sucesso) {
         setItens(json.dados);
+        setCriarDigital(json.criarDigital || []);
+        setStatusOperacional(json.statusOperacional || null);
         if (json.integracao) setIntegracao(json.integracao);
         if (typeof json.configuracoes?.certificacaoAutomatica === 'boolean') {
           setCertificacaoAutomatica(json.configuracoes.certificacaoAutomatica);
@@ -163,33 +172,102 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
     }
   };
 
-  const simularWhatsapp = async (item) => {
+  const enviarWhatsappIndividual = async (item) => {
+    if (enviandoWhatsPorToken[item.token]) return;
+    if (!window.confirm(`Enviar mensagem de WhatsApp via Zionic para ${item.nome}?`)) return;
+    setEnviandoWhatsPorToken((prev) => ({ ...prev, [item.token]: true }));
     try {
       const res = await authFetch('/api/notificacoes/whatsapp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: item.token })
+        body: JSON.stringify({ token: item.token, simular: false })
       });
       const json = await res.json();
-      mostrarToast(json.sucesso ? `📱 Link enviado (simulado) para ${item.nome}` : json.mensagem);
+      if (json.sucesso) {
+        mostrarToast(
+          json.simulado
+            ? `📱 Disparo simulado para ${item.nome} (credenciais Zionic não ativas)`
+            : `✅ WhatsApp enviado via Zionic para ${item.nome}!`
+        );
+      } else {
+        mostrarToast(`⚠️ ${json.mensagem || 'Falha ao enviar WhatsApp.'}`);
+      }
     } catch {
-      mostrarToast('Falha ao simular disparo.');
+      mostrarToast('Falha na comunicação ao enviar WhatsApp.');
+    } finally {
+      setEnviandoWhatsPorToken((prev) => {
+        const proximo = { ...prev };
+        delete proximo[item.token];
+        return proximo;
+      });
+    }
+  };
+
+  const executarReguaAgora = async () => {
+    if (executandoRegua) return;
+    if (!window.confirm('Deseja iniciar a Régua de WhatsApp agora (envio real com intervalo de 60s entre alunos)?')) return;
+    setExecutandoRegua(true);
+    try {
+      const res = await authFetch('/api/regua/executar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const json = await res.json();
+      mostrarToast(json.sucesso ? `🚀 ${json.mensagem}` : `⚠️ ${json.mensagem}`);
+    } catch {
+      mostrarToast('Falha ao iniciar a régua de WhatsApp.');
+    } finally {
+      setExecutandoRegua(false);
     }
   };
 
   const termo = busca.trim().toLowerCase();
   const digitos = busca.replace(/\D/g, '');
-  const filtrados = itens.filter((i) =>
-    !termo ||
-    i.nome.toLowerCase().includes(termo) ||
-    (digitos && i.cpf.replace(/\D/g, '').includes(digitos)) ||
-    (i.resposta?.observacao && i.resposta.observacao.toLowerCase().includes(termo)) ||
-    (i.resposta?.resumoCustomizacao && i.resposta.resumoCustomizacao.toLowerCase().includes(termo))
-  );
+  const filtrados = itens
+    .filter((i) => {
+      const bateBusca =
+        !termo ||
+        i.nome.toLowerCase().includes(termo) ||
+        (digitos && i.cpf.replace(/\D/g, '').includes(digitos)) ||
+        (i.cursos && i.cursos.some((c) => String(c.curso || '').toLowerCase().includes(termo))) ||
+        (i.resposta?.protocolo && String(i.resposta.protocolo).toLowerCase().includes(termo)) ||
+        (i.resposta?.observacao && i.resposta.observacao.toLowerCase().includes(termo)) ||
+        (i.resposta?.resumoCustomizacao && i.resposta.resumoCustomizacao.toLowerCase().includes(termo));
+
+      if (!bateBusca) return false;
+
+      if (filtroRapido === 'pendentes') {
+        return i.status === 'EMITIR' && i.resposta?.emitidoNoLyra !== true;
+      }
+      if (filtroRapido === 'emitidos') {
+        return i.status === 'EMITIR' && i.resposta?.emitidoNoLyra === true;
+      }
+      if (filtroRapido === 'customizados') {
+        return Boolean(
+          i.resposta?.resumoCustomizacao ||
+          i.resposta?.periodosSugeridos?.some((p) => p.aceite === 'Não Aceito' || p.customizado)
+        );
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (ordenacao === 'urgentes') {
+        const ha = typeof a.horasRestantes96h === 'number' ? a.horasRestantes96h : 9999;
+        const hb = typeof b.horasRestantes96h === 'number' ? b.horasRestantes96h : 9999;
+        return ha - hb;
+      }
+      const da = String(a.dataReferencia || '');
+      const db = String(b.dataReferencia || '');
+      return ordenacao === 'antigos' ? da.localeCompare(db) : db.localeCompare(da);
+    });
 
   const entrada = filtrados.filter((i) => i.status === 'ENTRADA');
-  const emitir = filtrados.filter((i) => i.status === 'EMITIR');
-  const LIMITE = 40;
+  const emitir = filtrados.filter((i) => i.status === 'EMITIR' && i.resposta?.emitidoNoLyra !== true);
+  const emitidos = filtrados.filter((i) => i.status === 'EMITIR' && i.resposta?.emitidoNoLyra === true);
+
+  const carregarMais = (coluna) => {
+    setLimitePorColuna((prev) => ({ ...prev, [coluna]: (prev[coluna] || 40) + 40 }));
+  };
 
   const Card = ({ item }) => {
     const jaEmitidoLyra = item.resposta?.emitidoNoLyra === true;
@@ -222,6 +300,47 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
           </span>
           <span className="card-course-preview"> • solicitado em {formatarData(item.dataReferencia)}</span>
         </div>
+
+        {item.tipoImpressoStatus && (
+          <div className="card-impresso-badge-row">
+            <span className={`impresso-pill ${item.tipoImpressoStatus === 'AGUARDANDO_PAGAMENTO' ? 'imp-pendente' : 'imp-ok'}`}>
+              🖨️ {item.tipoImpressoStatus === 'AGUARDANDO_PAGAMENTO'
+                ? 'Impresso: Aguardando Pagamento'
+                : 'Impresso: Aprovado / Retirada'}
+            </span>
+          </div>
+        )}
+
+        {item.status === 'ENTRADA' && (
+          <div className="card-whatsapp-meta">
+            <span className="whats-pill">
+              <Smartphone size={12} />
+              {item.statusWhatsApp === 'D0_ENVIADO'
+                ? 'D0 enviado'
+                : item.statusWhatsApp === 'LEMBRETE_DIARIO'
+                  ? `Lembrete (${item.totalLembretesWhatsApp || 1})`
+                  : item.statusWhatsApp === 'ALERTA_24H' || item.statusWhatsApp === 'ALERTA_2H'
+                    ? 'Alerta últimas 24h'
+                    : item.statusWhatsApp === 'EXPIRADO'
+                      ? 'Aviso 96h enviado'
+                      : 'Aguardando 1º envio'}
+            </span>
+            {typeof item.horasRestantes96h === 'number' && (
+              <span
+                className={`prazo-pill ${
+                  item.horasRestantes96h <= 0
+                    ? 'prazo-expirado'
+                    : item.horasRestantes96h <= 24
+                      ? 'prazo-urgente'
+                      : 'prazo-ok'
+                }`}
+                title={item.dataUltimoWhatsApp ? `Último envio: ${item.dataUltimoWhatsApp}` : undefined}
+              >
+                {item.horasRestantes96h <= 0 ? 'Prazo 96h vencido' : `Restam ${item.horasRestantes96h}h`}
+              </span>
+            )}
+          </div>
+        )}
 
         {item.resposta && (
           <div className="card-data-summary">
@@ -351,8 +470,14 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
 
         <div className="card-footer-actions">
           {item.status === 'ENTRADA' ? (
-            <button type="button" className="btn-card-action" onClick={() => simularWhatsapp(item)}>
-              <Smartphone size={14} /> WhatsApp
+            <button
+              type="button"
+              className="btn-card-action"
+              onClick={() => enviarWhatsappIndividual(item)}
+              disabled={Boolean(enviandoWhatsPorToken[item.token])}
+              title="Enviar link por WhatsApp via Zionic para este aluno"
+            >
+              <Smartphone size={14} /> {enviandoWhatsPorToken[item.token] ? 'Enviando...' : 'WhatsApp'}
             </button>
           ) : jaEmitidoLyra ? (
             <span className="badge-emitted-pill" title="Certificado já aprovado e emitido no Lyra">
@@ -413,6 +538,30 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
                 <Smartphone size={13} style={{ marginRight: 4 }} /> IP Rede: http://{ipLocal}:{window.location.port || '5180'}
               </span>
             )}
+
+            {statusOperacional && (
+              <span
+                className="live-pill"
+                style={{ marginLeft: 8, background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', borderColor: 'rgba(59, 130, 246, 0.3)' }}
+                title="Status da Régua de WhatsApp (1h) no servidor"
+              >
+                {statusOperacional.reguaEmAndamento
+                  ? '⏰ Régua 1h: Em execução...'
+                  : statusOperacional.ultimaExecucaoRegua?.dataHora
+                    ? `⏰ Régua: ${statusOperacional.ultimaExecucaoRegua.dataHora} (${statusOperacional.ultimaExecucaoRegua.enviados ?? 0} env.)`
+                    : '⏰ Régua 1h: Ativa (aguardando 1º ciclo)'}
+              </span>
+            )}
+
+            {statusOperacional?.fila120MinCount > 0 && (
+              <span
+                className="live-pill"
+                style={{ marginLeft: 8, background: 'rgba(245, 158, 11, 0.14)', color: '#fcd34d', borderColor: 'rgba(245, 158, 11, 0.35)' }}
+                title="Alunos aguardando emissão automática na janela de 120 minutos"
+              >
+                ⏱️ Fila 120 min: {statusOperacional.fila120MinCount}
+              </span>
+            )}
           </div>
           <h2 className="admin-title">Links individuais por aluno</h2>
           <p className="admin-sub">
@@ -420,16 +569,28 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
             ENTRADA para EMITIR.
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-refresh"
-          onClick={sincronizarBase}
-          disabled={sincronizando}
-          title="Recarregar dados da planilha ou base local"
-        >
-          <RefreshCw size={16} className={sincronizando ? 'animate-spin' : ''} />
-          {sincronizando ? 'Sincronizando...' : 'Sincronizar'}
-        </button>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-refresh"
+            onClick={executarReguaAgora}
+            disabled={executandoRegua}
+            title="Iniciar rodada da Régua de WhatsApp agora"
+          >
+            <Smartphone size={16} />
+            {executandoRegua ? 'Iniciando...' : 'Executar Régua'}
+          </button>
+          <button
+            type="button"
+            className="btn-refresh"
+            onClick={sincronizarBase}
+            disabled={sincronizando}
+            title="Recarregar dados da planilha ou base local"
+          >
+            <RefreshCw size={16} className={sincronizando ? 'animate-spin' : ''} />
+            {sincronizando ? 'Sincronizando...' : 'Sincronizar'}
+          </button>
+        </div>
       </div>
 
       <div className="metrics-grid">
@@ -457,11 +618,22 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
           <input
             type="text"
             className="filter-input"
-            placeholder="Buscar por nome ou CPF..."
+            placeholder="Buscar por nome, CPF, curso ou protocolo..."
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
           />
         </div>
+
+        <select
+          className="filter-select"
+          value={ordenacao}
+          onChange={(e) => setOrdenacao(e.target.value)}
+          aria-label="Ordenar solicitações"
+        >
+          <option value="recentes">Mais recentes primeiro</option>
+          <option value="antigos">Mais antigos primeiro</option>
+          <option value="urgentes">Prazo 96h mais urgente</option>
+        </select>
 
         <div
           className={`auto-cert-toggle-card ${certificacaoAutomatica ? 'is-active' : 'is-manual'}`}
@@ -511,6 +683,39 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
         </div>
       </div>
 
+      <div className="kanban-quick-filters" role="group" aria-label="Filtros rápidos">
+        {[
+          { id: 'todos', label: `Todos (${itens.length})` },
+          { id: 'pendentes', label: `Pendentes de Emissão (${itens.filter((i) => i.status === 'EMITIR' && i.resposta?.emitidoNoLyra !== true).length})` },
+          { id: 'emitidos', label: `Emitidos (${itens.filter((i) => i.status === 'EMITIR' && i.resposta?.emitidoNoLyra === true).length})` },
+          { id: 'customizados', label: `Data Customizada (${itens.filter((i) => i.resposta?.resumoCustomizacao || i.resposta?.periodosSugeridos?.some((p) => p.aceite === 'Não Aceito' || p.customizado)).length})` }
+        ].map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            className={`quick-filter-pill ${filtroRapido === f.id ? 'active' : ''}`}
+            onClick={() => setFiltroRapido(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {criarDigital.length > 0 && (
+        <div className="criar-digital-banner animate-fade-in">
+          <div className="criar-digital-banner-head">
+            <strong>🖨️ Impressos aguardando criação manual do Digital no Lyra ({criarDigital.length})</strong>
+          </div>
+          <div className="criar-digital-banner-list">
+            {criarDigital.map((cd, idx) => (
+              <span key={idx} className="criar-digital-chip">
+                <strong>{cd.nome}</strong> ({cd.cpf}) — {cd.curso} <em>[{cd.statusLyra || 'Pendente'}]</em>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       {carregando ? (
         <p className="sf-muted">Carregando...</p>
       ) : (
@@ -524,9 +729,11 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
               <span className="col-counter">{entrada.length}</span>
             </div>
             <div className="kanban-cards-stack">
-              {entrada.slice(0, LIMITE).map((i) => <Card key={i.token} item={i} />)}
-              {entrada.length > LIMITE && (
-                <div className="cards-more-note">+{entrada.length - LIMITE} — use a busca para filtrar.</div>
+              {entrada.slice(0, limitePorColuna.entrada).map((i) => <Card key={i.token} item={i} />)}
+              {entrada.length > limitePorColuna.entrada && (
+                <button type="button" className="btn-load-more" onClick={() => carregarMais('entrada')}>
+                  Mostrar mais (+{Math.min(40, entrada.length - limitePorColuna.entrada)} de {entrada.length - limitePorColuna.entrada} restantes)
+                </button>
               )}
             </div>
           </div>
@@ -543,11 +750,42 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
               {emitir.length === 0 ? (
                 <div className="kanban-empty-dropzone">
                   <FileText size={32} />
-                  <p>Nenhum aluno respondeu ainda.</p>
-                  <span>Clique em “Abrir link” em um card de ENTRADA para testar como aluno.</span>
+                  <p>Nenhum aluno aguardando emissão.</p>
+                  <span>Quando um aluno responder ao formulário, ele aparecerá aqui para emissão.</span>
                 </div>
               ) : (
-                emitir.map((i) => <Card key={i.token} item={i} />)
+                emitir.slice(0, limitePorColuna.emitir).map((i) => <Card key={i.token} item={i} />)
+              )}
+              {emitir.length > limitePorColuna.emitir && (
+                <button type="button" className="btn-load-more" onClick={() => carregarMais('emitir')}>
+                  Mostrar mais (+{Math.min(40, emitir.length - limitePorColuna.emitir)} de {emitir.length - limitePorColuna.emitir} restantes)
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="kanban-column">
+            <div className="column-header">
+              <div className="col-title-row">
+                <span className="col-indicator indicator-blue" />
+                <h4>EMITIDOS</h4>
+              </div>
+              <span className="col-counter">{emitidos.length}</span>
+            </div>
+            <div className="kanban-cards-stack">
+              {emitidos.length === 0 ? (
+                <div className="kanban-empty-dropzone">
+                  <Award size={32} />
+                  <p>Nenhum certificado emitido ainda.</p>
+                  <span>Os alunos aprovados no Lyra aparecem automaticamente aqui.</span>
+                </div>
+              ) : (
+                emitidos.slice(0, limitePorColuna.emitidos).map((i) => <Card key={i.token} item={i} />)
+              )}
+              {emitidos.length > limitePorColuna.emitidos && (
+                <button type="button" className="btn-load-more" onClick={() => carregarMais('emitidos')}>
+                  Mostrar mais (+{Math.min(40, emitidos.length - limitePorColuna.emitidos)} de {emitidos.length - limitePorColuna.emitidos} restantes)
+                </button>
               )}
             </div>
           </div>

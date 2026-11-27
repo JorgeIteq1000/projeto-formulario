@@ -190,6 +190,9 @@ function gerarToken(cpf, dataReferencia) {
 // ============================================
 const links = new Map();
 const tokensCancelados = new Map();
+let impressosCriarDigital = [];
+let reguaWhatsAppEmAndamento = false;
+let ultimaExecucaoRegua = null;
 const respostas = carregarRespostas(RESPOSTAS_FILE);
 let configuracoesPainel = carregarConfiguracoes(CONFIG_FILE);
 // Tokens com envio em andamento: impede dois envios simultâneos (duplo clique) de criar dois cards
@@ -413,14 +416,25 @@ async function carregarBase() {
   const ehImpresso = (l) => String(l.tipoCertificado || '').trim().toLowerCase().includes('impresso');
 
   const impressoPorCpfCurso = new Map();
+  impressosCriarDigital = [];
   for (const l of linhasEscopo) {
     if (!ehImpresso(l)) continue;
     const cpfImp = normalizarCpf(l.cpf);
     const cursoImp = String(l.curso || '').trim().toUpperCase();
     if (!cpfImp || !cursoImp) continue;
     const stLyraNorm = String(l.statusLyra || '').trim().toUpperCase();
+    const stFormNorm = String(l.statusOriginal || '').trim().toUpperCase();
     const tipoImp = stLyraNorm.includes('PAGAMENTO') ? 'AGUARDANDO_PAGAMENTO' : 'APROVADO';
     impressoPorCpfCurso.set(`${cpfImp}|${cursoImp}`, tipoImp);
+    if (stFormNorm === 'CRIAR DIGITAL') {
+      impressosCriarDigital.push({
+        nome: l.nome || 'Aluno(a)',
+        cpf: formatarCpf(cpfImp),
+        curso: l.curso || '',
+        statusLyra: l.statusLyra || '',
+        solicitacao: l.solicitacao || ''
+      });
+    }
   }
 
   const linhas = linhasEscopo.filter((l) => !ehImpresso(l));
@@ -527,6 +541,9 @@ async function carregarBase() {
     ) ? 'EMITIR' : 'ENTRADA';
     const protocoloPlanilha = primeiroPreenchido('protocolo') || null;
     const inseridoPlanilhaEm = primeiroPreenchido('dataInsercao') || null;
+    const statusWhatsApp = primeiroPreenchido('statusWhatsApp') || '';
+    const dataUltimoWhatsApp = primeiroPreenchido('dataUltimoWhatsApp') || '';
+    const totalLembretesWhatsApp = Math.max(0, ...itens.map((i) => Number(i.totalLembretesWhatsApp) || 0));
 
     links.set(token, {
       token,
@@ -539,6 +556,9 @@ async function carregarBase() {
       statusPlanilha: statusOriginalPlanilha,
       protocoloPlanilha,
       inseridoPlanilhaEm,
+      statusWhatsApp,
+      dataUltimoWhatsApp,
+      totalLembretesWhatsApp,
       // Link já gravado na coluna T da planilha (só vale se for deste mesmo token)
       linkPlanilha: ((itens.find((i) => i.link && String(i.link).endsWith(`/${token}`)) || {}).link) || '',
       dataReferencia,
@@ -1285,9 +1305,14 @@ app.post('/api/lyra/cancelar-expirados', async (req, res) => {
 });
 
 app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
+  const agoraMs = Date.now();
   const dados = [...links.values()].map((l) => {
     const r = respostas.get(l.token);
     const estaEmitir = Boolean(r) || l.statusPlanilha === 'EMITIR';
+    const dtInicio96 = parseDataBR(l.inseridoPlanilhaEm) || parseDataBR(l.dataReferencia);
+    const horasRestantes96h = dtInicio96
+      ? Math.round(96 - (agoraMs - dtInicio96.getTime()) / (3600 * 1000))
+      : null;
     return {
       token: l.token,
       link: montarUrl(l.token, req),
@@ -1295,6 +1320,12 @@ app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
       cpf: formatarCpf(l.cpf),
       telefone: l.telefone,
       dataReferencia: l.dataReferencia,
+      inseridoPlanilhaEm: l.inseridoPlanilhaEm || null,
+      statusWhatsApp: l.statusWhatsApp || '',
+      dataUltimoWhatsApp: l.dataUltimoWhatsApp || '',
+      totalLembretesWhatsApp: l.totalLembretesWhatsApp || 0,
+      horasRestantes96h,
+      tipoImpressoStatus: l.tipoImpressoStatus || null,
       cursos: l.cursos,
       status: estaEmitir ? 'EMITIR' : 'ENTRADA',
       resposta: r || (l.statusPlanilha === 'EMITIR' ? {
@@ -1310,6 +1341,14 @@ app.get('/api/solicitacoes', middlewareAutenticacaoAdmin, (req, res) => {
     total: dados.length,
     integracao: statusIntegracao,
     configuracoes: configuracoesPainel,
+    criarDigital: impressosCriarDigital,
+    statusOperacional: {
+      reguaEmAndamento: reguaWhatsAppEmAndamento,
+      ultimaExecucaoRegua,
+      fila120MinCount: [...respostas.values()].filter(
+        (r) => r.emissaoModo === 'AUTOMATICA_AGENDADA' && r.emitidoNoLyra !== true
+      ).length
+    },
     ipLocal,
     dados
   });
@@ -1496,7 +1535,11 @@ app.post('/api/notificacoes/whatsapp', middlewareAutenticacaoAdmin, async (req, 
     linkUrl: url
   });
 
-  const simular = Boolean(req.body?.simular) || !process.env.ZIONIC_BEARER_TOKEN;
+  const temCredenciaisZionic = Boolean(
+    (process.env.ZIONIC_BEARER_TOKEN && process.env.ZIONIC_BEARER_TOKEN.trim()) ||
+    (process.env.ZIONIC_EMAIL && process.env.ZIONIC_PASSWORD)
+  );
+  const simular = Boolean(req.body?.simular) || !temCredenciaisZionic;
 
   if (simular) {
     console.log(`📱 [ZIONIC SIMULADO] ${link.nome} (${link.telefone}) → ${url}`);
@@ -1538,6 +1581,65 @@ app.post('/api/notificacoes/whatsapp', middlewareAutenticacaoAdmin, async (req, 
   }
 });
 
+
+// Execução unificada da Régua de WhatsApp (usada pelo loop de 1h e pelo botão manual do painel)
+async function executarReguaAgendada({ origem = 'agendada' } = {}) {
+  if (SHEET_SOMENTE_LEITURA || !GOOGLE_SHEET_ID) {
+    return { iniciado: false, motivo: 'Planilha não configurada ou em modo somente leitura.' };
+  }
+  if (reguaWhatsAppEmAndamento) {
+    console.log(`⏭️  [RÉGUA 1H] Execução anterior ainda em andamento; pulando ciclo (${origem}).`);
+    return { iniciado: false, emAndamento: true, motivo: 'Já existe uma execução da régua em andamento.' };
+  }
+  reguaWhatsAppEmAndamento = true;
+  try {
+    const relatorio = await executarReguaWhatsApp({
+      enviar: true,
+      intervaloSegundos: Number(process.env.INTERVALO_DISPARO_SEGUNDOS || 60),
+      limiteDisparos: Number(process.env.LIMITE_DISPAROS_POR_EXECUCAO || 45),
+      spreadsheetId: GOOGLE_SHEET_ID
+    });
+    ultimaExecucaoRegua = {
+      dataHora: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+      origem,
+      enviados: (relatorio?.enviadosD0 || 0) + (relatorio?.enviadosLembrete || 0) + (relatorio?.enviadosAlerta2h || 0) + (relatorio?.enviadosExpirado || 0),
+      erros: relatorio?.erros || 0
+    };
+    return { iniciado: true, relatorio };
+  } catch (err) {
+    console.error('❌ [RÉGUA 1H] Erro na execução agendada:', err.message);
+    ultimaExecucaoRegua = {
+      dataHora: new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+      origem,
+      erro: err.message
+    };
+    return { iniciado: false, erro: err.message };
+  } finally {
+    reguaWhatsAppEmAndamento = false;
+  }
+}
+
+// Disparo manual imediato da Régua de WhatsApp pelo botão no painel
+app.post('/api/regua/executar', middlewareAutenticacaoAdmin, (req, res) => {
+  if (reguaWhatsAppEmAndamento) {
+    return res.status(409).json({
+      sucesso: false,
+      emAndamento: true,
+      mensagem: 'A régua de WhatsApp já está em execução no momento.'
+    });
+  }
+  if (SHEET_SOMENTE_LEITURA || !GOOGLE_SHEET_ID) {
+    return res.status(400).json({
+      sucesso: false,
+      mensagem: 'Planilha em modo somente leitura ou GOOGLE_SHEET_ID não configurado.'
+    });
+  }
+  executarReguaAgendada({ origem: 'manual_painel' });
+  return res.json({
+    sucesso: true,
+    mensagem: 'Régua de WhatsApp iniciada em segundo plano (intervalo de 60s entre envios).'
+  });
+});
 
 // Acionador da fila de emissão automática (útil para cron externo / Vercel ou processamento sob demanda)
 app.all('/api/cron/emissao-automatica', middlewareAutenticacaoAdmin, async (req, res) => {
@@ -1597,34 +1699,12 @@ if (isDirectRun) {
   // Executa a Régua de WhatsApp (Zionic) automaticamente a cada 1 hora no servidor,
   // mantendo o intervalo anti-bloqueio de 60s entre disparos e limite de 45 por ciclo.
   if (process.env.NODE_ENV !== 'test' && process.env.DESABILITAR_REGUA_AUTO !== 'true') {
-    let reguaWhatsAppEmAndamento = false;
-    const executarReguaAgendada = async () => {
-      if (SHEET_SOMENTE_LEITURA || !GOOGLE_SHEET_ID) return;
-      if (reguaWhatsAppEmAndamento) {
-        console.log('⏭️  [RÉGUA 1H] Execução anterior ainda em andamento; pulando ciclo.');
-        return;
-      }
-      reguaWhatsAppEmAndamento = true;
-      try {
-        await executarReguaWhatsApp({
-          enviar: true,
-          intervaloSegundos: Number(process.env.INTERVALO_DISPARO_SEGUNDOS || 60),
-          limiteDisparos: Number(process.env.LIMITE_DISPAROS_POR_EXECUCAO || 45),
-          spreadsheetId: GOOGLE_SHEET_ID
-        });
-      } catch (err) {
-        console.error('❌ [RÉGUA 1H] Erro na execução agendada:', err.message);
-      } finally {
-        reguaWhatsAppEmAndamento = false;
-      }
-    };
-
     const intervaloReguaMs = Math.max(60_000, Number(process.env.REGUA_INTERVALO_MS || 60 * 60 * 1000));
     setTimeout(() => {
-      executarReguaAgendada();
+      executarReguaAgendada({ origem: 'startup_1h' });
     }, 60_000).unref();
     setInterval(() => {
-      executarReguaAgendada();
+      executarReguaAgendada({ origem: 'agendada_1h' });
     }, intervaloReguaMs).unref();
     console.log(`⏰ [RÉGUA 1H] Agendamento automático ativo no servidor (a cada ${Math.round(intervaloReguaMs / 60000)} min).`);
   }

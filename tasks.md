@@ -83,3 +83,11 @@
   - [`Zionic/mensagemTemplate.js`](file:///d:/projeto-formulario/Zionic/mensagemTemplate.js): Criadas mensagens de confirmação de envio do formulário (`montarMensagemFormularioEnviado`) e pós-emissão (`montarMensagemCertificadoEmitido`) com 3 variações (Digital padrão, Impresso Aguardando Pagamento → Financeiro/Cobrança, Impresso Aprovado → retirada na central), todas com singular/plural e rodapé automático.
   - [`Zionic/reguaWhatsApp.js`](file:///d:/projeto-formulario/Zionic/reguaWhatsApp.js) & [`server.js`](file:///d:/projeto-formulario/server.js): Solicitações Impressas não geram link nem cobrança de WhatsApp para o aluno; preservado vínculo do Impresso para envio da mensagem correta quando o Digital é emitido.
   - [`LISTADOR/listador-extensoes-aperf.py`](file:///d:/projeto-formulario/LISTADOR/listador-extensoes-aperf.py): Marca `CRIAR DIGITAL` na Coluna I para Impressos sem Digital e finaliza automaticamente no Lyra (`PUT .../finished/{id}`) o Impresso em `Aguardando Aprovação` quando ambos (Impresso + Digital) existem para o mesmo `CPF + CURSO`.
+
+- [x] **Tarefa 15: Melhorias Operacionais no Painel Kanban**
+  - Separada a 3ª coluna **`EMITIDOS`** de **`EMITIR`** + filtros rápidos (`Todos`, `Pendentes de Emissão`, `Emitidos`, `Data Customizada`) em [`src/components/AdminKanban.jsx`](file:///d:/projeto-formulario/src/components/AdminKanban.jsx).
+  - Exibição do status do WhatsApp e contagem regressiva de 96h nos cards de `ENTRADA`.
+  - Banner de solicitações Impressas em `CRIAR DIGITAL` e selo de Impresso vinculado nos cards.
+  - Botão `"Executar Régua"` no topo (`POST /api/regua/executar`) e envio real individual no botão `WhatsApp` do card.
+  - Busca ampliada (nome, CPF, curso, protocolo), ordenação (`recentes`, `antigos`, `urgentes`) e botão `"Mostrar mais"` por coluna.
+  - Indicador no cabeçalho com última execução da Régua 1h e contagem da fila automática de 120 min.
