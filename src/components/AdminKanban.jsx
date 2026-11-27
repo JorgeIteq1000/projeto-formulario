@@ -317,23 +317,24 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
               <Smartphone size={12} />
               {item.statusWhatsApp === 'D0_ENVIADO'
                 ? 'D0 enviado'
-                : item.statusWhatsApp === 'LEMBRETE_DIARIO'
+                : String(item.statusWhatsApp || '').startsWith('LEMBRETE')
                   ? `Lembrete (${item.totalLembretesWhatsApp || 1})`
                   : item.statusWhatsApp === 'ALERTA_24H' || item.statusWhatsApp === 'ALERTA_2H'
                     ? 'Alerta últimas 24h'
                     : item.statusWhatsApp === 'EXPIRADO'
                       ? 'Aviso 96h enviado'
-                      : 'Aguardando 1º envio'}
+                      : item.statusWhatsApp
+                        ? item.statusWhatsApp
+                        : 'Aguardando 1º envio'}
             </span>
             {typeof item.horasRestantes96h === 'number' && (
               <span
-                className={`prazo-pill ${
-                  item.horasRestantes96h <= 0
-                    ? 'prazo-expirado'
-                    : item.horasRestantes96h <= 24
-                      ? 'prazo-urgente'
-                      : 'prazo-ok'
-                }`}
+                className={`prazo-pill ${item.horasRestantes96h <= 0
+                  ? 'prazo-expirado'
+                  : item.horasRestantes96h <= 24
+                    ? 'prazo-urgente'
+                    : 'prazo-ok'
+                  }`}
                 title={item.dataUltimoWhatsApp ? `Último envio: ${item.dataUltimoWhatsApp}` : undefined}
               >
                 {item.horasRestantes96h <= 0 ? 'Prazo 96h vencido' : `Restam ${item.horasRestantes96h}h`}
@@ -350,17 +351,16 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
                 🔷 Bitrix24 SPA: #{item.resposta.bitrixCardId} ({item.resposta.bitrixStageId || ((item.resposta.temRevisao || item.resposta.periodosSugeridos?.some(p => p.aceite === 'Não Aceito' || p.customizado) || item.resposta.observacao) ? 'DT1046_76:PREPARATION' : 'DT1046_76:CLIENT')})
               </span>
             )}
-            {! item.resposta.origemPlanilha && (
+            {!item.resposta.origemPlanilha && (
               <span>
                 Professor:{' '}
                 {item.resposta.professor
-                  ? `Sim — ${
-                      item.resposta.rede === 'municipal'
-                        ? item.resposta.prefeituraSP
-                          ? 'Prefeitura de SP'
-                          : 'Municipal (Outro Município)'
-                        : ROTULO_REDE[item.resposta.rede]
-                    }`
+                  ? `Sim — ${item.resposta.rede === 'municipal'
+                    ? item.resposta.prefeituraSP
+                      ? 'Prefeitura de SP'
+                      : 'Municipal (Outro Município)'
+                    : ROTULO_REDE[item.resposta.rede]
+                  }`
                   : 'Não'}
               </span>
             )}
