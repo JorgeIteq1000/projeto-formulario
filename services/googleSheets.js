@@ -1063,5 +1063,6 @@ function linhaEhImpressaOuEncerrada(headersNorm, row) {
   const stLyra = idxStatusLyra !== -1 ? semAcento(row[idxStatusLyra] || '') : '';
 
   if (tipo.includes('IMPRESSO')) return true;
-  return ['CANCELADO', 'CANCELADO_96H', 'FINALIZADO'].includes(stForm) || ['CANCELADO', 'FINALIZADO'].includes(stLyra);
+  return ['CANCELADO', 'CANCELADO_96H', 'CANCELADO MANUAL', 'CANCELADO_MANUAL', 'FINALIZADO', 'APROVADO'].includes(stForm)
+    || ['CANCELADO', 'FINALIZADO', 'APROVADO'].includes(stLyra);
 }

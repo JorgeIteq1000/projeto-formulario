@@ -282,6 +282,8 @@ def executar_rotina_automatizada(session_id=None):
         for status_alvo, rotulo_status in [
             ("waiting_approval", "Aguardando Aprovação"),
             ("waiting_payment", "Aguardando Pagamento"),
+            ("approved", "Aprovado"),
+            ("canceled", "Cancelado"),
         ]:
             log(f"🔎 Buscando solicitações no Lyra com status '{rotulo_status}' ({status_alvo})...")
             rota_sonda = f'certificates/certificate-solicitations?status={status_alvo}&sort={{"_id":-1}}&page=1&limit=50&aggregate=[]'
@@ -397,6 +399,7 @@ def executar_rotina_automatizada(session_id=None):
         log("📝 Preparando Anti-Duplicidade do Google Sheets...")
         dados_existentes = []
         chaves_existentes = {}
+        ids_para_linhas = {}
         ids_eventos_existentes = set()
         try:
             dados_existentes = sheet.get_all_values()
@@ -419,25 +422,29 @@ def executar_rotina_automatizada(session_id=None):
                     st_lyra_row = row[idx_status_lyra].strip() if len(row) > idx_status_lyra else ""
                     id_ev_row = row[idx_id_evento].strip() if len(row) > idx_id_evento else ""
 
+                    info_linha = {
+                        "row": num_linha,
+                        "status_form": st_form_row,
+                        "status_lyra": st_lyra_row,
+                        "mod_status": row[idx_mod_status].strip() if len(row) > idx_mod_status else "",
+                        "prazo_min": row[idx_prazo_min].strip() if len(row) > idx_prazo_min else "",
+                    }
+
                     if re.match(r'^[0-9a-fA-F]{24}$', id_ev_row):
                         ids_eventos_existentes.add(id_ev_row)
+                        ids_para_linhas[id_ev_row] = info_linha
 
                     # Linhas já marcadas como Cancelado não bloqueiam novas solicitações reabertas para o mesmo curso/contrato
                     eh_cancelada = (
-                        normalizar_texto(st_form_row) in ("CANCELADO", "CANCELADO_96H")
+                        normalizar_texto(st_form_row) in ("CANCELADO", "CANCELADO_96H", "CANCELADO MANUAL")
                         or normalizar_texto(st_lyra_row) == "CANCELADO"
                     )
                     if cpf_row and curso_row and not eh_cancelada:
-                        chaves_existentes[f"{cpf_row}|{tipo_row}|{curso_row}"] = {
-                            "row": num_linha,
-                            "status_form": st_form_row,
-                            "status_lyra": st_lyra_row,
-                            "mod_status": row[idx_mod_status].strip() if len(row) > idx_mod_status else "",
-                            "prazo_min": row[idx_prazo_min].strip() if len(row) > idx_prazo_min else "",
-                        }
+                        chaves_existentes[f"{cpf_row}|{tipo_row}|{curso_row}"] = info_linha
         except Exception as e:
             log(f"⚠️ Erro ao verificar duplicidade: {e}")
             chaves_existentes = {}
+            ids_para_linhas = {}
             ids_eventos_existentes = set()
 
         def col_idx_para_a1(idx0):
@@ -473,6 +480,7 @@ def executar_rotina_automatizada(session_id=None):
 
         updates_existentes = []
         linhas_planilha = []
+        cache_alunos_cpf = {}
         for r in resultados:
             cpf = r.get("dataStudent", {}).get("cpf", "").strip()
             curso = r.get("dataCourse", {}).get("course", "").strip()
@@ -522,27 +530,51 @@ def executar_rotina_automatizada(session_id=None):
                 except Exception:
                     pass
 
-            # Trava anti-duplicidade: verifica pelo ID da solicitação ou por chave ativa (linhas canceladas não bloqueiam reabertura)
+            # Trava anti-duplicidade e confronto de status (ID do Evento ou chave ativa CPF|TIPO|CURSO)
             solicitacao_id = str(r.get("_id") or "").strip()
-            if solicitacao_id and solicitacao_id in ids_eventos_existentes:
-                continue
-
             chave_atual = f"{cpf}|{tipo_certificado.upper()}|{curso.upper()}"
             tem_digital_correspondente = f"{cpf}|{curso.upper()}" in digitais_ativos
 
-            if chave_atual in chaves_existentes:
+            existente = ids_para_linhas.get(solicitacao_id) if solicitacao_id else None
+            if not existente and chave_atual in chaves_existentes:
                 existente = chaves_existentes[chave_atual]
-                row_num = existente["row"]
-                status_form_atual = normalizar_texto(existente["status_form"])
 
-                # Regra de Impresso já existente: se já possui Digital vinculado e Impresso está Aguardando Aprovação, finaliza no Lyra
-                if (
+            if existente:
+                row_num = existente["row"]
+                if row_num == -1:
+                    continue
+                status_form_atual = normalizar_texto(existente["status_form"])
+                status_lyra_atual = normalizar_texto(existente["status_lyra"])
+
+                # 1. Confronto de Cancelamento Manual no Lyra: silencia a linha na planilha
+                if status_lyra == "Cancelado":
+                    if status_form_atual not in ("CANCELADO", "CANCELADO_96H", "CANCELADO MANUAL", "FINALIZADO") or status_lyra_atual != "CANCELADO":
+                        agora_canc = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                        log(f"🛑 [CANCELAMENTO MANUAL LYRA] {r.get('dataStudent', {}).get('name', '')} | {curso} -> linha {row_num} marcada como Cancelado Manual.")
+                        updates_existentes.append({"range": f"{col_i_letra}{row_num}", "values": [["Cancelado Manual"]]})
+                        updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [["Cancelado"]]})
+                        updates_existentes.append({"range": f"{col_w_letra}{row_num}", "values": [[agora_canc]]})
+                        existente["status_form"] = "Cancelado Manual"
+                        existente["status_lyra"] = "Cancelado"
+                # 2. Confronto de Aprovação no Lyra
+                elif status_lyra == "Aprovado":
+                    if status_form_atual not in ("CANCELADO", "CANCELADO_96H", "CANCELADO MANUAL", "FINALIZADO"):
+                        if status_lyra_atual != "APROVADO":
+                            agora_aprov = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                            updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [["Aprovado"]]})
+                            updates_existentes.append({"range": f"{col_w_letra}{row_num}", "values": [[agora_aprov]]})
+                            existente["status_lyra"] = "Aprovado"
+                        if status_form_atual not in ("EMITIR", "APROVADO"):
+                            updates_existentes.append({"range": f"{col_i_letra}{row_num}", "values": [["Aprovado"]]})
+                            existente["status_form"] = "Aprovado"
+                # 3. Regra de Impresso já existente: se já possui Digital vinculado e Impresso está Aguardando Aprovação, finaliza no Lyra
+                elif (
                     tipo_certificado == "Impresso"
                     and tem_digital_correspondente
                     and status_lyra == "Aguardando Aprovação"
-                    and normalizar_texto(existente["status_lyra"]) != "FINALIZADO"
+                    and status_lyra_atual != "FINALIZADO"
                     and status_form_atual != "FINALIZADO"
-                    and status_form_atual != "CANCELADO"
+                    and status_form_atual not in ("CANCELADO", "CANCELADO_96H", "CANCELADO MANUAL")
                 ):
                     if finalizar_solicitacao_impressa(solicitacao_id, headers):
                         agora_fin = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -561,20 +593,29 @@ def executar_rotina_automatizada(session_id=None):
                     ):
                         updates_existentes.append({"range": f"{col_i_letra}{row_num}", "values": [["Aguardando Pagamento"]]})
                     # Não sobrescreve Status Lyra se a linha já foi marcada como Cancelado ou Finalizado
-                    if status_form_atual not in ("CANCELADO", "FINALIZADO") and existente["status_lyra"] != status_lyra:
+                    if status_form_atual not in ("CANCELADO", "CANCELADO_96H", "CANCELADO MANUAL", "FINALIZADO") and existente["status_lyra"] != status_lyra:
                         updates_existentes.append({"range": f"{col_v_letra}{row_num}", "values": [[status_lyra]]})
 
                 if (not existente["prazo_min"] or existente["prazo_min"] == "N/A") and previsao_termino and previsao_termino != "N/A":
                     updates_existentes.append({"range": f"{col_x_letra}{row_num}", "values": [[previsao_termino]]})
                 continue
+
             if solicitacao_id:
                 ids_eventos_existentes.add(solicitacao_id)
-            chaves_existentes[chave_atual] = {"row": -1, "status_form": "", "status_lyra": status_lyra, "mod_status": "", "prazo_min": previsao_termino}
+                ids_para_linhas[solicitacao_id] = {"row": -1, "status_form": "", "status_lyra": status_lyra, "mod_status": "", "prazo_min": previsao_termino}
+            if status_lyra != "Cancelado":
+                chaves_existentes[chave_atual] = {"row": -1, "status_form": "", "status_lyra": status_lyra, "mod_status": "", "prazo_min": previsao_termino}
 
             # Define Status do Formulário (Coluna I) e finalização automática se for Impresso
             status_formulario_novo = "PENDENTE_ENVIO"
             modificacao_status_novo = ""
-            if tipo_certificado == "Impresso":
+            if status_lyra == "Aprovado":
+                status_formulario_novo = "Aprovado"
+                modificacao_status_novo = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            elif status_lyra == "Cancelado":
+                status_formulario_novo = "Cancelado Manual"
+                modificacao_status_novo = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            elif tipo_certificado == "Impresso":
                 if tem_digital_correspondente:
                     if status_lyra == "Aguardando Aprovação":
                         if finalizar_solicitacao_impressa(solicitacao_id, headers):
@@ -605,33 +646,34 @@ def executar_rotina_automatizada(session_id=None):
             user_id = ""
 
             if cpf:
-                try:
-                    h_tel = headers.copy()
-                    h_tel["requestOrigin"] = "busca-rapida-pesquisa"
-                    rota_tel = f'students/students/cpf/{cpf}?populate={{}}'
-                    d_tel = bater_na_api(rota_tel, h_tel)
-                    if d_tel and d_tel.get("data"):
-                        dt_aluno = d_tel["data"]
-                        tel_raw = dt_aluno.get("cellPhone") or dt_aluno.get("whatsApp") or dt_aluno.get("phone") or "N/A"
-                        telefone = str(tel_raw).strip()
-                        
-                        rg = str(dt_aluno.get("identity") or dt_aluno.get("rg") or "").strip()
-                        
-                        nacionalidade = str(dt_aluno.get("nationality") or "").strip()
-                        if not nacionalidade:
-                            nacionalidade = "Brasileira"
-                        
-                        bdate_raw = dt_aluno.get("birthDate") or ""
-                        if bdate_raw:
-                            data_nascimento = formatar_data_nascimento(bdate_raw)
-                                
-                        u = dt_aluno.get("user")
-                        if isinstance(u, dict):
-                            user_id = str(u.get("_id") or "")
-                        else:
-                            user_id = str(dt_aluno.get("_userId") or "")
-                except Exception:
-                    telefone = "N/A"
+                if cpf in cache_alunos_cpf:
+                    dt_aluno = cache_alunos_cpf[cpf]
+                else:
+                    dt_aluno = None
+                    try:
+                        h_tel = headers.copy()
+                        h_tel["requestOrigin"] = "busca-rapida-pesquisa"
+                        rota_tel = f'students/students/cpf/{cpf}?populate={{}}'
+                        d_tel = bater_na_api(rota_tel, h_tel)
+                        if d_tel and d_tel.get("data"):
+                            dt_aluno = d_tel["data"]
+                    except Exception:
+                        dt_aluno = None
+                    cache_alunos_cpf[cpf] = dt_aluno
+
+                if dt_aluno:
+                    tel_raw = dt_aluno.get("cellPhone") or dt_aluno.get("whatsApp") or dt_aluno.get("phone") or "N/A"
+                    telefone = str(tel_raw).strip()
+                    rg = str(dt_aluno.get("identity") or dt_aluno.get("rg") or "").strip()
+                    nacionalidade = str(dt_aluno.get("nationality") or "").strip() or "Brasileira"
+                    bdate_raw = dt_aluno.get("birthDate") or ""
+                    if bdate_raw:
+                        data_nascimento = formatar_data_nascimento(bdate_raw)
+                    u = dt_aluno.get("user")
+                    if isinstance(u, dict):
+                        user_id = str(u.get("_id") or "")
+                    else:
+                        user_id = str(dt_aluno.get("_userId") or "")
             
             data_insercao_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             # Mapa semântico de todos os campos possíveis

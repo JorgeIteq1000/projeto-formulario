@@ -185,7 +185,7 @@ export async function executarReguaWhatsApp({
   const ehCanceladoLinha = (i) => {
     const stForm = String(i.statusOriginal || '').trim().toUpperCase();
     const stLyra = String(i.statusLyra || '').trim().toUpperCase();
-    return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
+    return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stForm === 'CANCELADO MANUAL' || stForm === 'CANCELADO_MANUAL' || stLyra === 'CANCELADO';
   };
 
   for (const [cpf, todosItens] of porCpf) {
@@ -198,13 +198,16 @@ export async function executarReguaWhatsApp({
     const telefone = itens.find((i) => i.telefone)?.telefone || '';
     const cursos = [...new Set(itens.map((i) => i.curso).filter(Boolean))];
 
-    // 1. Verifica se já foi emitido (ou possui protocolo) -> ignora sempre
+    // 1. Verifica se já foi emitido/aprovado (ou possui protocolo) -> ignora sempre
     const jaEmitido = itens.some((i) => {
       const stForm = String(i.statusOriginal || '').trim().toUpperCase();
       const stLyra = String(i.statusLyra || '').trim().toUpperCase();
       return (
         stForm === 'EMITIR' ||
+        stForm === 'APROVADO' ||
+        stForm === 'FINALIZADO' ||
         stLyra === 'APROVADO' ||
+        stLyra === 'FINALIZADO' ||
         String(i.protocolo || '').trim().length > 0
       );
     });
@@ -268,10 +271,18 @@ export async function executarReguaWhatsApp({
     let proximoStatus = null;
     let novoTotalLembretes = totalLembretes;
 
-    // 0. Se já foi marcado como Cancelado na planilha pelo Apps Script (96h):
-    //    - Se já recebeu algum contato antes e ainda não recebeu o aviso EXPIRADO, dispara o aviso final!
-    //    - Se nunca recebeu contato ou já recebeu EXPIRADO, apenas ignora.
+    // 0. Se foi marcado como Cancelado na planilha:
+    //    - Cancelamento Manual no Lyra: silencia completamente (não envia nada até abrir nova solicitação).
+    //    - Expiração 96h: se já recebeu contato antes e ainda não recebeu o aviso EXPIRADO, dispara o aviso final.
     if (jaCanceladoPlanilha) {
+      const canceladoManual = itens.some((i) =>
+        String(i.statusOriginal || '').trim().toUpperCase().includes('CANCELADO MANUAL')
+      );
+      if (canceladoManual) {
+        relatorio.jaEmitidos++;
+        relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_CANCELADO_MANUAL' });
+        continue;
+      }
       if (statusAtual && statusAtual !== 'EXPIRADO') {
         etapa = 'EXPIRADO_96H';
         mensagem = montarMensagemExpirado({ nome, cursos });

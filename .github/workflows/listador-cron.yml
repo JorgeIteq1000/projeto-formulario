@@ -15,7 +15,7 @@ jobs:
   executar-listador:
     name: Varredura de Certificados (Lyra -> Google Sheets)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout do Repositório

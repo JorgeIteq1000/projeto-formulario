@@ -101,16 +101,21 @@ function preencherLinksNovos() {
     var idxSolic = headers.findIndex(function (h) { return h.indexOf('SOLICITA') !== -1; });
     var idxTipoCurso = headers.findIndex(function (h) { return h.indexOf('TIPO') !== -1 && h.indexOf('CURSO') !== -1; });
     var idxTipoCertLink = headers.findIndex(function (h) { return h.indexOf('TIPO') !== -1 && h.indexOf('CERT') !== -1; });
+    var idxStatusLink = headers.findIndex(function (h) { return h === 'STATUS DO FORMULARIO' || h === 'STATUS DO EVENTO'; });
+    var idxStatusLyraLink = headers.indexOf('STATUS LYRA');
     var idxLink = headers.indexOf('LINK');
     if (idxCpf === -1) return;
     if (idxLink === -1) idxLink = 19; // Coluna T
 
-    // Agrupa datas de solicitação por CPF (mesma regra do server.js: Impresso nunca recebe link)
+    // Agrupa datas de solicitação por CPF (mesma regra do server.js: Impresso, Aprovado e Cancelado nunca recebem link)
     var datasPorCpf = {};
     for (var i = 1; i < dados.length; i++) {
       var tipoNorm = idxTipoCurso !== -1 ? semAcento_(dados[i][idxTipoCurso]) : 'EXTENSAO';
       if (tipoNorm.indexOf('EXTENSAO') === -1 && tipoNorm.indexOf('APERFEICOAMENTO') === -1) continue;
       if (idxTipoCertLink !== -1 && semAcento_(dados[i][idxTipoCertLink]).indexOf('IMPRESSO') !== -1) continue;
+      var stFormLink = idxStatusLink !== -1 ? semAcento_(dados[i][idxStatusLink]) : '';
+      var stLyraLink = idxStatusLyraLink !== -1 ? semAcento_(dados[i][idxStatusLyraLink]) : '';
+      if (stFormLink === 'APROVADO' || stFormLink === 'FINALIZADO' || stFormLink.indexOf('CANCELADO') !== -1 || stLyraLink === 'APROVADO' || stLyraLink === 'CANCELADO' || stLyraLink === 'FINALIZADO') continue;
 
       var cpf = normalizarCpf_(dados[i][idxCpf]);
       if (!cpf) continue;
@@ -266,7 +271,7 @@ function verificarExpiracao96h() {
       // Certificado Impresso tem ciclo próprio (CRIAR DIGITAL / Aguardando Pagamento / Finalizado no Lyra): nunca cancelar por 96h
       var tipoCert = idxTipoCert !== -1 ? semAcento_(linha[idxTipoCert]) : '';
       if (tipoCert.indexOf('IMPRESSO') !== -1) continue;
-      if (status === 'EMITIR' || status === 'FINALIZADO' || status === 'CANCELADO' || status === 'CANCELADO_96H' || statusLyra === 'CANCELADO' || statusLyra === 'FINALIZADO' || protocolo) continue;
+      if (status === 'EMITIR' || status === 'APROVADO' || status === 'FINALIZADO' || status.indexOf('CANCELADO') !== -1 || statusLyra === 'APROVADO' || statusLyra === 'CANCELADO' || statusLyra === 'FINALIZADO' || protocolo) continue;
 
       var dtCriacao = parseDataPlanilha_(linha[idxDataEvento]);
       if (!dtCriacao) continue;

@@ -448,10 +448,21 @@ async function carregarBase() {
   const ehCanceladoPlanilha = (i) => {
     const stForm = String(i.statusOriginal || '').trim().toUpperCase();
     const stLyra = String(i.statusLyra || '').trim().toUpperCase();
-    return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stLyra === 'CANCELADO';
+    return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stForm === 'CANCELADO MANUAL' || stForm === 'CANCELADO_MANUAL' || stLyra === 'CANCELADO';
   };
 
-  for (const [cpf, todosItens] of porCpf) {
+  // Solicitações importadas do Lyra já Aprovadas/Finalizadas sem resposta de formulário não devem entrar como pendentes em ENTRADA
+  const ehAprovadoSemFormulario = (i) => {
+    const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+    const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+    const temProto = String(i.protocolo || '').trim().length > 0;
+    if (stForm === 'EMITIR' || temProto) return false;
+    return stForm === 'APROVADO' || stForm === 'FINALIZADO' || stLyra === 'APROVADO' || stLyra === 'FINALIZADO';
+  };
+
+  for (const [cpf, todosItensRaw] of porCpf) {
+    const todosItens = todosItensRaw.filter((i) => !ehAprovadoSemFormulario(i));
+    if (todosItens.length === 0) continue;
     const itensAtivos = todosItens.filter((i) => !ehCanceladoPlanilha(i));
     const itens = itensAtivos.length > 0 ? itensAtivos : todosItens;
 
