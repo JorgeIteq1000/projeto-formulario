@@ -600,15 +600,29 @@ export default function AdminKanban({ estatisticas, onUpdate }) {
         </div>
         <div className="metric-card">
           <div className="metric-label">Links gerados</div>
-          <div className="metric-value">{estatisticas?.totalLinks ?? '—'}</div>
+          <div className="metric-value">{itens.length || estatisticas?.totalLinks || 0}</div>
         </div>
         <div className="metric-card border-amber">
           <div className="metric-label">Aguardando aluno</div>
-          <div className="metric-value text-amber">{estatisticas?.totalPendentes ?? '—'}</div>
+          <div className="metric-value text-amber">
+            {carregando ? (estatisticas?.totalPendentes ?? '—') : itens.filter((i) => i.status === 'ENTRADA').length}
+          </div>
         </div>
         <div className="metric-card border-emerald">
           <div className="metric-label">Prontos para emitir</div>
-          <div className="metric-value text-emerald">{estatisticas?.totalRespondidos ?? '—'}</div>
+          <div className="metric-value text-emerald">
+            {carregando
+              ? (estatisticas?.totalRespondidos ?? '—')
+              : itens.filter((i) => i.status === 'EMITIR' && i.resposta?.emitidoNoLyra !== true).length}
+          </div>
+        </div>
+        <div className="metric-card border-blue">
+          <div className="metric-label">Emitidos</div>
+          <div className="metric-value text-blue">
+            {carregando
+              ? '—'
+              : itens.filter((i) => i.status === 'EMITIR' && i.resposta?.emitidoNoLyra === true).length}
+          </div>
         </div>
       </div>
 
