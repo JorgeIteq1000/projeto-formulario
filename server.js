@@ -547,6 +547,9 @@ async function carregarBase() {
     });
 
     // Se na planilha já consta como EMITIR ou com Protocolo preenchido, hidrata respostas em memória
+    const aprovadoNaPlanilha = itens.some(
+      (i) => String(i.statusLyra || '').trim().toUpperCase() === 'APROVADO'
+    );
     if (!respostas.has(token) && statusOriginalPlanilha === 'EMITIR') {
       const respostaJsonRaw = primeiroPreenchido('respostaJson');
       let respostaHidratada = null;
@@ -561,7 +564,12 @@ async function carregarBase() {
         respostas.set(token, {
           ...respostaHidratada,
           protocolo: respostaHidratada.protocolo || protocoloPlanilha || 'EMITIR',
-          statusBitrix: respostaHidratada.statusBitrix || 'EMITIR'
+          statusBitrix: respostaHidratada.statusBitrix || 'EMITIR',
+          ...(aprovadoNaPlanilha ? {
+            emitidoNoLyra: true,
+            aguardandoEmissaoManual: false,
+            emitidoEm: respostaHidratada.emitidoEm || primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm
+          } : {})
         });
       } else {
         respostas.set(token, {
@@ -569,8 +577,22 @@ async function carregarBase() {
           dataSubmissao: new Date().toISOString(),
           dataSubmissaoFormatada: inseridoPlanilhaEm || new Date().toLocaleString('pt-BR'),
           statusBitrix: 'EMITIR',
-          origemPlanilha: true
+          origemPlanilha: true,
+          ...(aprovadoNaPlanilha ? {
+            emitidoNoLyra: true,
+            aguardandoEmissaoManual: false,
+            emitidoEm: primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm
+          } : {})
         });
+      }
+    } else if (respostas.has(token) && aprovadoNaPlanilha) {
+      const respAtual = respostas.get(token);
+      if (respAtual && respAtual.emitidoNoLyra !== true) {
+        respAtual.emitidoNoLyra = true;
+        respAtual.aguardandoEmissaoManual = false;
+        if (!respAtual.emitidoEm) {
+          respAtual.emitidoEm = primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm;
+        }
       }
     }
   }
