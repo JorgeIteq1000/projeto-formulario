@@ -20,7 +20,8 @@ import {
   atualizarStatusLyraNoSheet,
   atualizarDadosCadastraisAlunoNoSheet,
   inicializarGoogleAuth,
-  gravarLinksNaPlanilha
+  gravarLinksNaPlanilha,
+  gravarStatusWhatsAppNaPlanilha
 } from './services/googleSheets.js';
 import { criarCardAlunoSPA } from './services/bitrix24.js';
 import { carregarRespostas, salvarRespostas } from './services/respostasStore.js';
@@ -415,6 +416,18 @@ async function carregarBase() {
   const linhasEscopo = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso));
   const ehImpresso = (l) => String(l.tipoCertificado || '').trim().toLowerCase().includes('impresso');
 
+  const digitaisAtivos = new Set();
+  for (const l of linhasEscopo) {
+    if (ehImpresso(l)) continue;
+    const cpfDig = normalizarCpf(l.cpf);
+    const cursoDig = String(l.curso || '').trim().toUpperCase();
+    const stFormDig = String(l.statusOriginal || '').trim().toUpperCase();
+    const stLyraDig = String(l.statusLyra || '').trim().toUpperCase();
+    if (cpfDig && cursoDig && !stFormDig.includes('CANCELADO') && stLyraDig !== 'CANCELADO') {
+      digitaisAtivos.add(`${cpfDig}|${cursoDig}`);
+    }
+  }
+
   const impressoPorCpfCurso = new Map();
   impressosCriarDigital = [];
   for (const l of linhasEscopo) {
@@ -426,7 +439,7 @@ async function carregarBase() {
     const stFormNorm = String(l.statusOriginal || '').trim().toUpperCase();
     const tipoImp = stLyraNorm.includes('PAGAMENTO') ? 'AGUARDANDO_PAGAMENTO' : 'APROVADO';
     impressoPorCpfCurso.set(`${cpfImp}|${cursoImp}`, tipoImp);
-    if (stFormNorm === 'CRIAR DIGITAL') {
+    if (stFormNorm === 'CRIAR DIGITAL' && !digitaisAtivos.has(`${cpfImp}|${cursoImp}`)) {
       impressosCriarDigital.push({
         nome: l.nome || 'Aluno(a)',
         cpf: formatarCpf(cpfImp),
@@ -1565,6 +1578,21 @@ app.post('/api/notificacoes/whatsapp', middlewareAutenticacaoAdmin, async (req, 
         mensagem: resZionic.erro || 'Falha ao enviar mensagem pelo Zionic.',
         detalhes: resZionic
       });
+    }
+
+    const agoraStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    link.statusWhatsApp = link.statusWhatsApp || 'D0_ENVIADO';
+    link.dataUltimoWhatsApp = agoraStr;
+    if (GOOGLE_SHEET_ID && !SHEET_SOMENTE_LEITURA) {
+      gravarStatusWhatsAppNaPlanilha({
+        spreadsheetId: GOOGLE_SHEET_ID,
+        atualizacoes: [{
+          cpf: link.cpf,
+          statusWhatsApp: link.statusWhatsApp,
+          dataUltimoWhatsApp: agoraStr,
+          totalLembretes: link.totalLembretesWhatsApp || 0
+        }]
+      }).catch((err) => console.warn(`⚠️ [ZIONIC] Falha ao gravar status manual na planilha: ${err.message}`));
     }
 
     res.json({
