@@ -204,6 +204,11 @@ export function obterConfigZionic() {
     'd74a60b0-8c34-421a-b18b-b8ca2c7e8042'
   ).trim();
 
+  const defaultTagId = (
+    process.env.ZIONIC_DEFAULT_TAG_ID ||
+    '04b23468-ef71-47be-8823-414f5105373c'
+  ).trim();
+
   return {
     apiUrl,
     token,
@@ -211,6 +216,7 @@ export function obterConfigZionic() {
     userId,
     whatsappInstanceId,
     integrationId,
+    defaultTagId,
     jwtPayload
   };
 }
@@ -617,12 +623,52 @@ export async function consultarMensagemZionic(messageId) {
 }
 
 /**
+ * Aplica uma tag ao contato na Zionic (ex: ADM-Processo de Extensão/Aperfeiçoamento).
+ * Não lança exceção caso a tag já esteja vinculada.
+ */
+export async function adicionarTagContatoZionic({ contactId, tagId = null }) {
+  const { apiUrl, companyId, defaultTagId } = obterConfigZionic();
+  const targetTagId = (tagId || defaultTagId || '').trim();
+  if (!contactId || !targetTagId) {
+    return { sucesso: false, motivo: 'contactId ou tagId ausente' };
+  }
+
+  try {
+    const headers = await obterHeadersZionic();
+    const url = `${apiUrl}/api/contacts/${encodeURIComponent(contactId)}/tags`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        tag_id: targetTagId,
+        company_id: companyId
+      })
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json?.success !== false) {
+      console.log(`🏷️  [ZIONIC] Tag ${targetTagId} aplicada ao contato ${contactId}.`);
+      return { sucesso: true, tagId: targetTagId, data: json?.data || null };
+    }
+    const msg = String(json?.message || json?.error || `HTTP ${res.status}`);
+    if (res.status === 409 || msg.toLowerCase().includes('já') || msg.toLowerCase().includes('already')) {
+      return { sucesso: true, jaExistia: true, tagId: targetTagId };
+    }
+    console.warn(`⚠️  [ZIONIC] Não foi possível aplicar tag ${targetTagId} no contato ${contactId}: ${msg}`);
+    return { sucesso: false, erro: msg };
+  } catch (err) {
+    console.warn(`⚠️  [ZIONIC] Erro ao aplicar tag no contato ${contactId}: ${err.message}`);
+    return { sucesso: false, erro: err.message };
+  }
+}
+
+/**
  * Fluxo completo de disparo de notificação para um aluno:
  * 1. Garante existência do contato (cria ou reaproveita).
  * 2. Localiza ou abre a conversa.
  * 3. Envia a mensagem formatada.
+ * 4. Aplica a tag padrão (ADM-Processo de Extensão/Aperfeiçoamento) no contato.
  */
-export async function dispararMensagemAlunoZionic({ nome, telefone, mensagem }) {
+export async function dispararMensagemAlunoZionic({ nome, telefone, mensagem, tagId = null }) {
   // 1. Garante contato
   const resContato = await garantirContatoZionic({ nome, telefone });
   if (!resContato.sucesso || !resContato.contactId) {
@@ -655,9 +701,20 @@ export async function dispararMensagemAlunoZionic({ nome, telefone, mensagem }) 
     mensagem
   });
 
+  // 4. Aplica tag no contato após disparo bem-sucedido
+  let tagAplicada = false;
+  if (resEnvio.sucesso) {
+    const resTag = await adicionarTagContatoZionic({
+      contactId: resContato.contactId,
+      tagId
+    });
+    tagAplicada = Boolean(resTag.sucesso);
+  }
+
   return {
     ...resEnvio,
     contactId: resContato.contactId,
-    conversationId: resConversa.conversationId
+    conversationId: resConversa.conversationId,
+    tagAplicada
   };
 }
