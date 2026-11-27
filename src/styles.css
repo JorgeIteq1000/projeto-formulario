@@ -47,7 +47,7 @@ body {
   color: var(--text-main);
   min-height: 100vh;
   line-height: 1.5;
-  background-image: 
+  background-image:
     radial-gradient(circle at 15% 10%, rgba(37, 99, 235, 0.12) 0%, transparent 40%),
     radial-gradient(circle at 85% 85%, rgba(139, 92, 246, 0.08) 0%, transparent 40%);
   background-attachment: fixed;
@@ -155,9 +155,20 @@ body {
 }
 
 @keyframes pulseDot {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.3); opacity: 1; }
-  100% { transform: scale(0.95); opacity: 0.8; }
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
 }
 
 .navbar-nav {
@@ -476,10 +487,21 @@ body {
   gap: 18px;
 }
 
-.grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
-.grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
-.grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
-.col-span-2 { grid-column: span 2; }
+.grid-cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.grid-cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid-cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.col-span-2 {
+  grid-column: span 2;
+}
 
 .grid-cols-2-sub {
   display: grid;
@@ -517,7 +539,8 @@ body {
   pointer-events: none;
 }
 
-.form-input, .form-textarea {
+.form-input,
+.form-textarea {
   width: 100%;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
@@ -534,7 +557,8 @@ body {
   padding-left: 42px;
 }
 
-.form-input:focus, .form-textarea:focus {
+.form-input:focus,
+.form-textarea:focus {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
 }
@@ -555,10 +579,21 @@ body {
   color: var(--text-dim);
 }
 
-.text-blue { color: #60a5fa; }
-.text-emerald { color: #34d399; }
-.text-amber { color: #fbbf24; }
-.text-rose { color: #f87171; }
+.text-blue {
+  color: #60a5fa;
+}
+
+.text-emerald {
+  color: #34d399;
+}
+
+.text-amber {
+  color: #fbbf24;
+}
+
+.text-rose {
+  color: #f87171;
+}
 
 /* SELEÇÃO DE CURSOS */
 .courses-selection-area {
@@ -806,7 +841,9 @@ body {
   line-height: 1.4;
 }
 
-.mt-4 { margin-top: 16px; }
+.mt-4 {
+  margin-top: 16px;
+}
 
 /* TERMO DE AUTO-RESPONSABILIDADE */
 .terms-card {
@@ -906,7 +943,9 @@ body {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ESTADO VAZIO */
@@ -1049,7 +1088,8 @@ body {
 }
 
 /* TIMELINE STEPS NO SUCESSO */
-.flow-steps-completed h4, .summary-details-card h4 {
+.flow-steps-completed h4,
+.summary-details-card h4 {
   font-family: 'Outfit', sans-serif;
   font-size: 1.05rem;
   color: #fff;
@@ -1555,9 +1595,20 @@ body {
   border-radius: 50%;
 }
 
-.indicator-amber { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
-.indicator-emerald { background: #10b981; box-shadow: 0 0 8px #10b981; }
-.indicator-blue { background: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
+.indicator-amber {
+  background: #f59e0b;
+  box-shadow: 0 0 8px #f59e0b;
+}
+
+.indicator-emerald {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.indicator-blue {
+  background: #3b82f6;
+  box-shadow: 0 0 8px #3b82f6;
+}
 
 .column-header h4 {
   font-family: 'Outfit', sans-serif;
@@ -1593,6 +1644,7 @@ body {
 .kanban-cards-stack::-webkit-scrollbar {
   width: 6px;
 }
+
 .kanban-cards-stack::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
@@ -2029,8 +2081,15 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ========================================= */
@@ -2040,9 +2099,11 @@ body {
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+
   .kanban-board {
     grid-template-columns: 1fr;
   }
+
   .governance-grid {
     grid-template-columns: 1fr;
   }
@@ -2052,31 +2113,42 @@ body {
   .form-title {
     font-size: 1.45rem;
   }
-  .grid-cols-2, .grid-cols-3, .grid-cols-4 {
+
+  .grid-cols-2,
+  .grid-cols-3,
+  .grid-cols-4 {
     grid-template-columns: 1fr;
   }
+
   .col-span-2 {
     grid-column: span 1;
   }
+
   .grid-cols-2-sub {
     grid-template-columns: 1fr;
   }
+
   .metrics-grid {
     grid-template-columns: 1fr;
   }
+
   .lookup-inputs {
     flex-direction: column;
   }
+
   .form-actions-bar {
     flex-direction: column;
   }
+
   .form-actions-bar .btn {
     width: 100%;
     justify-content: center;
   }
+
   .success-actions {
     flex-direction: column;
   }
+
   .navbar-inner {
     flex-direction: column;
     align-items: flex-start;
@@ -2141,8 +2213,14 @@ body {
   color: #fff;
 }
 
-.sf-muted { color: var(--text-muted); font-size: 0.95rem; }
-.sf-small { font-size: 0.8rem; }
+.sf-muted {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.sf-small {
+  font-size: 0.8rem;
+}
 
 .sf-section-title {
   display: flex;
@@ -2180,7 +2258,7 @@ body {
   color: var(--text-dim);
 }
 
-.sf-readonly > div {
+.sf-readonly>div {
   display: flex;
   flex-direction: column;
 }
@@ -2229,8 +2307,13 @@ body {
   gap: 10px;
 }
 
-.sf-options-2 { grid-template-columns: 1fr 1fr; }
-.sf-options-3 { grid-template-columns: 1fr; }
+.sf-options-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.sf-options-3 {
+  grid-template-columns: 1fr;
+}
 
 .sf-option {
   padding: 16px;
@@ -2415,8 +2498,13 @@ a.btn-card-primary {
 }
 
 @media (min-width: 560px) {
-  .sf-readonly-grid { grid-template-columns: 1.6fr 1fr; }
-  .sf-options-3 { grid-template-columns: repeat(3, 1fr); }
+  .sf-readonly-grid {
+    grid-template-columns: 1.6fr 1fr;
+  }
+
+  .sf-options-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 /* ============================================
@@ -2833,8 +2921,8 @@ a.btn-card-primary {
   min-height: 100vh;
   padding: 24px 16px;
   background: radial-gradient(circle at 50% 20%, rgba(37, 99, 235, 0.15) 0%, transparent 60%),
-              radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
-              var(--bg-primary);
+    radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+    var(--bg-primary);
 }
 
 .login-card-container {
