@@ -1,9 +1,8 @@
 name: Régua de WhatsApp Zionic (Cron 1h)
 
 on:
-  schedule:
-    # Executa a cada 1 hora de forma autônoma na nuvem
-    - cron: '0 * * * *'
+  # Agendamento automático migrado para o servidor (server.js) a cada 1h com trava anti-concorrência;
+  # workflow mantido para execução manual (workflow_dispatch) quando necessário.
   workflow_dispatch:
     inputs:
       modo_envio:

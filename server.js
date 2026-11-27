@@ -7,6 +7,7 @@ import fs from 'fs';
 import os from 'os';
 import dotenv from 'dotenv';
 import { dispararMensagemAlunoZionic } from './Zionic/zionicClient.js';
+import { executarReguaWhatsApp } from './Zionic/reguaWhatsApp.js';
 import {
   montarMensagemCertificado,
   montarMensagemFormularioEnviado,
@@ -1559,6 +1560,41 @@ if (isDirectRun) {
       console.error('❌ Erro no loop da fila de emissão automática:', err.message);
     });
   }, intervaloFilaMs).unref();
+
+  // Executa a Régua de WhatsApp (Zionic) automaticamente a cada 1 hora no servidor,
+  // mantendo o intervalo anti-bloqueio de 60s entre disparos e limite de 45 por ciclo.
+  if (process.env.NODE_ENV !== 'test' && process.env.DESABILITAR_REGUA_AUTO !== 'true') {
+    let reguaWhatsAppEmAndamento = false;
+    const executarReguaAgendada = async () => {
+      if (SHEET_SOMENTE_LEITURA || !GOOGLE_SHEET_ID) return;
+      if (reguaWhatsAppEmAndamento) {
+        console.log('⏭️  [RÉGUA 1H] Execução anterior ainda em andamento; pulando ciclo.');
+        return;
+      }
+      reguaWhatsAppEmAndamento = true;
+      try {
+        await executarReguaWhatsApp({
+          enviar: true,
+          intervaloSegundos: Number(process.env.INTERVALO_DISPARO_SEGUNDOS || 60),
+          limiteDisparos: Number(process.env.LIMITE_DISPAROS_POR_EXECUCAO || 45),
+          spreadsheetId: GOOGLE_SHEET_ID
+        });
+      } catch (err) {
+        console.error('❌ [RÉGUA 1H] Erro na execução agendada:', err.message);
+      } finally {
+        reguaWhatsAppEmAndamento = false;
+      }
+    };
+
+    const intervaloReguaMs = Math.max(60_000, Number(process.env.REGUA_INTERVALO_MS || 60 * 60 * 1000));
+    setTimeout(() => {
+      executarReguaAgendada();
+    }, 60_000).unref();
+    setInterval(() => {
+      executarReguaAgendada();
+    }, intervaloReguaMs).unref();
+    console.log(`⏰ [RÉGUA 1H] Agendamento automático ativo no servidor (a cada ${Math.round(intervaloReguaMs / 60000)} min).`);
+  }
 }
 
 export { app, carregarBase };
