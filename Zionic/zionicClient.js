@@ -196,12 +196,12 @@ export function obterConfigZionic() {
 
   const whatsappInstanceId = (
     process.env.ZIONIC_WHATSAPP_INSTANCE_ID ||
-    '18aa332a-d0cd-4977-a51d-748418eb80cd'
+    '76d71d68-f1d5-4e07-a93f-77f0bb02598c'
   ).trim();
 
   const integrationId = (
     process.env.ZIONIC_INTEGRATION_ID ||
-    'd74a60b0-8c34-421a-b18b-b8ca2c7e8042'
+    'a08ff5a2-cfd0-4324-ae88-aa50434f16e2'
   ).trim();
 
   const defaultTagId = (
@@ -636,6 +636,23 @@ export async function adicionarTagContatoZionic({ contactId, tagId = null }) {
   try {
     const headers = await obterHeadersZionic();
     const url = `${apiUrl}/api/contacts/${encodeURIComponent(contactId)}/tags`;
+
+    // Verifica antes se a tag já está vinculada (a Zionic retorna 500 ao tentar duplicar)
+    try {
+      const checkRes = await fetch(url, { method: 'GET', headers });
+      if (checkRes.ok) {
+        const checkJson = await checkRes.json().catch(() => ({}));
+        const jaTem = (checkJson?.data || []).some(
+          (t) => t?.tag_id === targetTagId || t?.tags?.id === targetTagId
+        );
+        if (jaTem) {
+          return { sucesso: true, jaExistia: true, tagId: targetTagId };
+        }
+      }
+    } catch {
+      // prossegue para tentar o POST
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       headers,
