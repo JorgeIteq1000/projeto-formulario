@@ -79,6 +79,15 @@ def eh_tipo_extensao_ou_aperfeicoamento(tipo_curso):
     norm = normalizar_texto(tipo_curso)
     return "EXTENSAO" in norm or "APERFEICOAMENTO" in norm
 
+def formatar_tipo_curso_planilha(tipo_raw):
+    bruto = str(tipo_raw or "").strip()
+    norm = normalizar_texto(bruto)
+    if "EXTENSAO" in norm and "PRESENCIAL" in norm:
+        return "Extensão 45h"
+    if norm == "EXTENSAO":
+        return "Extensão 100h"
+    return bruto
+
 def traduzir_status_lyra(status_raw):
     s = str(status_raw or "").strip().lower()
     mapa = {
@@ -457,6 +466,7 @@ def executar_rotina_automatizada(session_id=None):
                 headers_norm = [normalizar_texto(h) for h in dados_existentes[0]]
                 idx_cpf = headers_norm.index("CPF") if "CPF" in headers_norm else 1
                 idx_tipo = headers_norm.index("TIPO DE CERTIFICADO") if "TIPO DE CERTIFICADO" in headers_norm else 3
+                idx_tipo_curso = next((i for i, h in enumerate(headers_norm) if "TIPO" in h and "CURSO" in h), 4)
                 idx_curso = headers_norm.index("CURSO") if "CURSO" in headers_norm else 5
                 idx_status_form = next((i for i, h in enumerate(headers_norm) if "STATUS DO FORMULARIO" in h or "STATUS DO EVENTO" in h), 8)
                 idx_id_evento = next((i for i, h in enumerate(headers_norm) if "ID DO EVENTO" in h), 9)
@@ -474,6 +484,7 @@ def executar_rotina_automatizada(session_id=None):
 
                     info_linha = {
                         "row": num_linha,
+                        "tipo_curso": row[idx_tipo_curso].strip() if len(row) > idx_tipo_curso else "",
                         "status_form": st_form_row,
                         "status_lyra": st_lyra_row,
                         "mod_status": row[idx_mod_status].strip() if len(row) > idx_mod_status else "",
@@ -506,10 +517,12 @@ def executar_rotina_automatizada(session_id=None):
             return res
 
         headers_norm_atual = [normalizar_texto(h) for h in cabecalhos_planilha]
+        col_e_idx = next((i for i, h in enumerate(headers_norm_atual) if "TIPO" in h and "CURSO" in h), 4)
         col_i_idx = next((i for i, h in enumerate(headers_norm_atual) if "STATUS DO FORMULARIO" in h or "STATUS DO EVENTO" in h), 8)
         col_v_idx = next((i for i, h in enumerate(headers_norm_atual) if "STATUS LYRA" in h), 21)
         col_w_idx = next((i for i, h in enumerate(headers_norm_atual) if "MODIFICACAO DO STATUS" in h), 22)
         col_x_idx = next((i for i, h in enumerate(headers_norm_atual) if "PRAZO MINIMO" in h), 23)
+        col_e_letra = col_idx_para_a1(col_e_idx)
         col_i_letra = col_idx_para_a1(col_i_idx)
         col_v_letra = col_idx_para_a1(col_v_idx)
         col_w_letra = col_idx_para_a1(col_w_idx)
@@ -648,6 +661,12 @@ def executar_rotina_automatizada(session_id=None):
 
                 if (not existente["prazo_min"] or existente["prazo_min"] == "N/A") and previsao_termino and previsao_termino != "N/A":
                     updates_existentes.append({"range": f"{col_x_letra}{row_num}", "values": [[previsao_termino]]})
+
+                tipo_curso_fmt = formatar_tipo_curso_planilha(r.get("dataCourse", {}).get("courseType", ""))
+                tipo_curso_atual = str(existente.get("tipo_curso") or "").strip()
+                if tipo_curso_fmt in ("Extensão 45h", "Extensão 100h") and tipo_curso_atual != tipo_curso_fmt:
+                    updates_existentes.append({"range": f"{col_e_letra}{row_num}", "values": [[tipo_curso_fmt]]})
+                    existente["tipo_curso"] = tipo_curso_fmt
                 continue
 
             if solicitacao_id:
@@ -681,7 +700,7 @@ def executar_rotina_automatizada(session_id=None):
                     status_formulario_novo = "CRIAR DIGITAL"
             
             nome = r.get("dataStudent", {}).get("name", "")
-            tipo_curso = r.get("dataCourse", {}).get("courseType", "")
+            tipo_curso = formatar_tipo_curso_planilha(r.get("dataCourse", {}).get("courseType", ""))
             certificadora = r.get("dataCourse", {}).get("certifier", "")
             
             dt_solicita_crua = r.get("createdAt", "")[:10]

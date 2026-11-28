@@ -547,8 +547,8 @@ async function carregarBase() {
           tipoCurso: i.tipoCurso || 'Extensão',
           certificadora: i.certificadora || 'Faculdade Certificadora',
           contrato: i.contrato || '',
-          // Carga da planilha; se ausente, busca no catálogo do Lyra (vazio quando não há correspondência única)
-          cargaHoraria: i.cargaHoraria || buscarCargaHoraria(i.tipoCurso, i.curso, i.certificadora) || '',
+          // Carga da planilha; se ausente, busca no catálogo do Lyra ou extrai de tipoCurso (ex: "Extensão 45h" / "Extensão 100h")
+          cargaHoraria: i.cargaHoraria || buscarCargaHoraria(i.tipoCurso, i.curso, i.certificadora) || (String(i.tipoCurso || '').match(/(\d+)\s*h/i)?.[1] || ''),
           solicitacao: i.solicitacao || ''
         }));
 
