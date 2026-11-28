@@ -188,29 +188,33 @@ export async function executarReguaWhatsApp({
     return stForm === 'CANCELADO' || stForm === 'CANCELADO_96H' || stForm === 'CANCELADO MANUAL' || stForm === 'CANCELADO_MANUAL' || stLyra === 'CANCELADO';
   };
 
+  const ehEmitidoLinha = (i) => {
+    const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+    const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+    return (
+      stForm === 'EMITIR' ||
+      stForm === 'APROVADO' ||
+      stForm === 'FINALIZADO' ||
+      stLyra === 'APROVADO' ||
+      stLyra === 'FINALIZADO' ||
+      String(i.protocolo || '').trim().length > 0
+    );
+  };
+
   for (const [cpf, todosItens] of porCpf) {
     relatorio.avaliados++;
-    // Se o aluno tem linha antiga cancelada e reabriu nova solicitação ativa, trabalha apenas com as ativas
+    // Separa linhas ativas das canceladas e, dentre as ativas, separa o que já foi emitido/aprovado do que ainda está pendente.
+    // Assim, se o aluno pediu novos cursos em outro dia após já ter um emitido, os novos entram normalmente no fluxo!
     const itensAtivos = todosItens.filter((i) => !ehCanceladoLinha(i));
-    const itens = itensAtivos.length > 0 ? itensAtivos : todosItens;
+    const itensPendentes = itensAtivos.filter((i) => !ehEmitidoLinha(i));
+    const itens = itensPendentes.length > 0 ? itensPendentes : (itensAtivos.length > 0 ? itensAtivos : todosItens);
 
     const nome = itens[0].nome || 'Aluno(a)';
-    const telefone = itens.find((i) => i.telefone)?.telefone || '';
+    const telefone = itens.find((i) => i.telefone)?.telefone || todosItens.find((i) => i.telefone)?.telefone || '';
     const cursos = [...new Set(itens.map((i) => i.curso).filter(Boolean))];
 
-    // 1. Verifica se já foi emitido/aprovado (ou possui protocolo) -> ignora sempre
-    const jaEmitido = itens.some((i) => {
-      const stForm = String(i.statusOriginal || '').trim().toUpperCase();
-      const stLyra = String(i.statusLyra || '').trim().toUpperCase();
-      return (
-        stForm === 'EMITIR' ||
-        stForm === 'APROVADO' ||
-        stForm === 'FINALIZADO' ||
-        stLyra === 'APROVADO' ||
-        stLyra === 'FINALIZADO' ||
-        String(i.protocolo || '').trim().length > 0
-      );
-    });
+    // 1. Se não há nenhum curso pendente e existem ativos já emitidos/aprovados -> ignora
+    const jaEmitido = itensPendentes.length === 0 && itensAtivos.length > 0;
 
     if (jaEmitido) {
       relatorio.jaEmitidos++;

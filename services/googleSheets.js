@@ -585,12 +585,14 @@ export async function gravarLinksNaPlanilha({ spreadsheetId, itens = [], dryRun 
     const updates = [];
     if (criarCabecalho) updates.push({ range: `'${nomeAba}'!${letra}1`, values: [['Link']] });
 
+    const headersNormLinks = headers.map((h) => semAcento(h));
     let jaCorretos = 0;
     let preservados = 0;
     const cpfsAtualizados = new Set();
     for (let i = 1; i < rows.length; i++) {
       const digitos = String(rows[i][colCpfIdx] || '').replace(/\D/g, '');
       if (!digitos) continue;
+      if (linhaEhImpressaOuEncerrada(headersNormLinks, rows[i])) { preservados++; continue; }
       const url = urlPorCpf.get(digitos.padStart(11, '0'));
       if (!url) continue;
 
@@ -809,6 +811,8 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     for (let i = 1; i < rows.length; i++) {
       const digitos = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
       if (!digitos || !porCpf.has(digitos)) continue;
+      const statusFormLinha = colStatusFormFinalIdx !== -1 ? semAcento(rows[i][colStatusFormFinalIdx] || '') : '';
+      if (linhaEhImpressaOuEncerrada(headersNorm, rows[i]) || statusFormLinha === 'EMITIR') continue;
 
       const info = porCpf.get(digitos);
       const linhaNum = i + 1;

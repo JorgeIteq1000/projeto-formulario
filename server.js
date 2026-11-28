@@ -487,144 +487,176 @@ async function carregarBase() {
     return stForm === 'APROVADO' || stForm === 'FINALIZADO' || stLyra === 'APROVADO' || stLyra === 'FINALIZADO';
   };
 
+  const ehItemEmitido = (i) => {
+    const stForm = String(i.statusOriginal || '').trim().toUpperCase();
+    const stLyra = String(i.statusLyra || '').trim().toUpperCase();
+    return (
+      stForm === 'EMITIR' ||
+      stForm === 'APROVADO' ||
+      stForm === 'FINALIZADO' ||
+      stLyra === 'APROVADO' ||
+      stLyra === 'FINALIZADO' ||
+      String(i.protocolo || '').trim().length > 0
+    );
+  };
+
   for (const [cpf, todosItensRaw] of porCpf) {
     const todosItens = todosItensRaw.filter((i) => !ehAprovadoSemFormulario(i));
     if (todosItens.length === 0) continue;
     const itensAtivos = todosItens.filter((i) => !ehCanceladoPlanilha(i));
-    const itens = itensAtivos.length > 0 ? itensAtivos : todosItens;
 
-    const datas = itens.map((i) => parseDataBR(i.solicitacao)).filter(Boolean);
-    const maisRecente = datas.length ? new Date(Math.max(...datas)) : new Date();
-    const inicioJanela = new Date(maisRecente.getTime() - JANELA_HORAS * 3600 * 1000);
-
-    const cursos = itens
-      .filter((i) => {
-        const d = parseDataBR(i.solicitacao);
-        if (!d) return true;
-        return d >= inicioJanela && d <= maisRecente;
-      })
-      .map((i) => ({
-        curso: i.curso || 'Curso de Extensão',
-        tipoCurso: i.tipoCurso || 'Extensão',
-        certificadora: i.certificadora || 'Faculdade Certificadora',
-        contrato: i.contrato || '',
-        // Carga da planilha; se ausente, busca no catálogo do Lyra (vazio quando não há correspondência única)
-        cargaHoraria: i.cargaHoraria || buscarCargaHoraria(i.tipoCurso, i.curso, i.certificadora) || '',
-        solicitacao: i.solicitacao || ''
-      }));
-
-    // Dados pessoais exibidos no formulário: lidos diretamente da aba de solicitações ("Extensões e Aperfeiçoamentos")
-    const primeiroPreenchido = (campo) => {
-      const achado = itens.find((i) => i[campo] && String(i[campo]).trim().length > 0);
-      return achado ? String(achado[campo]).trim() : '';
-    };
-
-    const dataReferencia = maisRecente.toISOString().slice(0, 10);
-    const token = gerarToken(cpf, dataReferencia);
-
-    // Verifica se algum dos cursos Digitais deste aluno possui solicitação Impressa vinculada
-    let tipoImpressoStatus = null;
-    for (const c of cursos) {
-      const imp = impressoPorCpfCurso.get(`${cpf}|${String(c.curso || '').trim().toUpperCase()}`);
-      if (imp === 'AGUARDANDO_PAGAMENTO') {
-        tipoImpressoStatus = 'AGUARDANDO_PAGAMENTO';
-        break;
+    // Separa lotes já respondidos/emitidos de novos lotes ainda pendentes (ex: aluno pediu novos cursos em outro dia)
+    const gruposParaProcessar = [];
+    if (itensAtivos.length === 0) {
+      gruposParaProcessar.push({ itens: todosItens, ehCancelado: true, ehEmitido: false });
+    } else {
+      const itensPendentes = itensAtivos.filter((i) => !ehItemEmitido(i));
+      const itensEmitidos = itensAtivos.filter((i) => ehItemEmitido(i));
+      if (itensPendentes.length > 0) {
+        gruposParaProcessar.push({ itens: itensPendentes, ehCancelado: false, ehEmitido: false });
       }
-      if (imp === 'APROVADO') {
-        tipoImpressoStatus = 'APROVADO';
+      if (itensEmitidos.length > 0) {
+        gruposParaProcessar.push({ itens: itensEmitidos, ehCancelado: false, ehEmitido: true });
       }
     }
 
-    if (itensAtivos.length === 0 && !respostas.has(token)) {
-      if (!tokensCancelados.has(token)) {
-        tokensCancelados.set(token, {
-          token,
-          cpf,
-          nome: itens[0].nome || 'Aluno(a)',
-          dataCancelamento: primeiroPreenchido('modificacaoStatus') || '',
-          motivo: 'Prazo de 96 horas expirado'
-        });
+    for (const grupo of gruposParaProcessar) {
+      const itens = grupo.itens;
+
+      const datas = itens.map((i) => parseDataBR(i.solicitacao)).filter(Boolean);
+      const maisRecente = datas.length ? new Date(Math.max(...datas)) : new Date();
+      const inicioJanela = new Date(maisRecente.getTime() - JANELA_HORAS * 3600 * 1000);
+
+      const cursos = itens
+        .filter((i) => {
+          const d = parseDataBR(i.solicitacao);
+          if (!d) return true;
+          return d >= inicioJanela && d <= maisRecente;
+        })
+        .map((i) => ({
+          curso: i.curso || 'Curso de Extensão',
+          tipoCurso: i.tipoCurso || 'Extensão',
+          certificadora: i.certificadora || 'Faculdade Certificadora',
+          contrato: i.contrato || '',
+          // Carga da planilha; se ausente, busca no catálogo do Lyra (vazio quando não há correspondência única)
+          cargaHoraria: i.cargaHoraria || buscarCargaHoraria(i.tipoCurso, i.curso, i.certificadora) || '',
+          solicitacao: i.solicitacao || ''
+        }));
+
+      // Dados pessoais exibidos no formulário: lidos diretamente da aba de solicitações ("Extensões e Aperfeiçoamentos")
+      const primeiroPreenchido = (campo) => {
+        const achado = itens.find((i) => i[campo] && String(i[campo]).trim().length > 0)
+          || todosItens.find((i) => i[campo] && String(i[campo]).trim().length > 0);
+        return achado ? String(achado[campo]).trim() : '';
+      };
+
+      const dataReferencia = maisRecente.toISOString().slice(0, 10);
+      let token = gerarToken(cpf, dataReferencia);
+      if (links.has(token)) {
+        token = gerarToken(cpf, `${dataReferencia}-${grupo.ehEmitido ? 'e' : 'p'}`);
       }
-      continue;
-    }
 
-    const statusOriginalPlanilha = itens.some((i) =>
-      String(i.statusOriginal || '').trim().toUpperCase() === 'EMITIR' ||
-      String(i.protocolo || '').trim().length > 0
-    ) ? 'EMITIR' : 'ENTRADA';
-    const protocoloPlanilha = primeiroPreenchido('protocolo') || null;
-    const inseridoPlanilhaEm = primeiroPreenchido('dataInsercao') || null;
-    const statusWhatsApp = primeiroPreenchido('statusWhatsApp') || '';
-    const dataUltimoWhatsApp = primeiroPreenchido('dataUltimoWhatsApp') || '';
-    const totalLembretesWhatsApp = Math.max(0, ...itens.map((i) => Number(i.totalLembretesWhatsApp) || 0));
-
-    links.set(token, {
-      token,
-      cpf,
-      nome: itens[0].nome || 'Aluno(a)',
-      telefone: itens[0].telefone || '',
-      dataNascimento: primeiroPreenchido('dataNascimento'),
-      rg: primeiroPreenchido('rg'),
-      naturalidade: primeiroPreenchido('naturalidade'),
-      statusPlanilha: statusOriginalPlanilha,
-      protocoloPlanilha,
-      inseridoPlanilhaEm,
-      statusWhatsApp,
-      dataUltimoWhatsApp,
-      totalLembretesWhatsApp,
-      // Link já gravado na coluna T da planilha (só vale se for deste mesmo token)
-      linkPlanilha: ((itens.find((i) => i.link && String(i.link).endsWith(`/${token}`)) || {}).link) || '',
-      dataReferencia,
-      tipoImpressoStatus,
-      cursos
-    });
-
-    // Se na planilha já consta como EMITIR ou com Protocolo preenchido, hidrata respostas em memória
-    const aprovadoNaPlanilha = itens.some(
-      (i) => String(i.statusLyra || '').trim().toUpperCase() === 'APROVADO'
-    );
-    if (!respostas.has(token) && statusOriginalPlanilha === 'EMITIR') {
-      const respostaJsonRaw = primeiroPreenchido('respostaJson');
-      let respostaHidratada = null;
-      if (respostaJsonRaw) {
-        try {
-          respostaHidratada = JSON.parse(respostaJsonRaw);
-        } catch {
-          respostaHidratada = null;
+      // Verifica se algum dos cursos Digitais deste aluno possui solicitação Impressa vinculada
+      let tipoImpressoStatus = null;
+      for (const c of cursos) {
+        const imp = impressoPorCpfCurso.get(`${cpf}|${String(c.curso || '').trim().toUpperCase()}`);
+        if (imp === 'AGUARDANDO_PAGAMENTO') {
+          tipoImpressoStatus = 'AGUARDANDO_PAGAMENTO';
+          break;
+        }
+        if (imp === 'APROVADO') {
+          tipoImpressoStatus = 'APROVADO';
         }
       }
-      if (respostaHidratada && typeof respostaHidratada === 'object') {
-        respostas.set(token, {
-          ...respostaHidratada,
-          protocolo: respostaHidratada.protocolo || protocoloPlanilha || 'EMITIR',
-          statusBitrix: respostaHidratada.statusBitrix || 'EMITIR',
-          ...(aprovadoNaPlanilha ? {
-            emitidoNoLyra: true,
-            aguardandoEmissaoManual: false,
-            emitidoEm: respostaHidratada.emitidoEm || primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm
-          } : {})
-        });
-      } else {
-        respostas.set(token, {
-          protocolo: protocoloPlanilha || 'EMITIR',
-          dataSubmissao: new Date().toISOString(),
-          dataSubmissaoFormatada: inseridoPlanilhaEm || new Date().toLocaleString('pt-BR'),
-          statusBitrix: 'EMITIR',
-          origemPlanilha: true,
-          ...(aprovadoNaPlanilha ? {
-            emitidoNoLyra: true,
-            aguardandoEmissaoManual: false,
-            emitidoEm: primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm
-          } : {})
-        });
+
+      if (grupo.ehCancelado && !respostas.has(token)) {
+        if (!tokensCancelados.has(token)) {
+          tokensCancelados.set(token, {
+            token,
+            cpf,
+            nome: itens[0].nome || 'Aluno(a)',
+            dataCancelamento: primeiroPreenchido('modificacaoStatus') || '',
+            motivo: 'Prazo de 96 horas expirado'
+          });
+        }
+        continue;
       }
-    } else if (respostas.has(token) && aprovadoNaPlanilha) {
-      const respAtual = respostas.get(token);
-      if (respAtual && respAtual.emitidoNoLyra !== true) {
-        respAtual.emitidoNoLyra = true;
-        respAtual.aguardandoEmissaoManual = false;
-        if (!respAtual.emitidoEm) {
-          respAtual.emitidoEm = primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm;
+
+      const statusOriginalPlanilha = grupo.ehEmitido ? 'EMITIR' : 'ENTRADA';
+      const protocoloPlanilha = primeiroPreenchido('protocolo') || null;
+      const inseridoPlanilhaEm = primeiroPreenchido('dataInsercao') || null;
+      const statusWhatsApp = primeiroPreenchido('statusWhatsApp') || '';
+      const dataUltimoWhatsApp = primeiroPreenchido('dataUltimoWhatsApp') || '';
+      const totalLembretesWhatsApp = Math.max(0, ...itens.map((i) => Number(i.totalLembretesWhatsApp) || 0));
+
+      links.set(token, {
+        token,
+        cpf,
+        nome: itens[0].nome || 'Aluno(a)',
+        telefone: itens[0].telefone || '',
+        dataNascimento: primeiroPreenchido('dataNascimento'),
+        rg: primeiroPreenchido('rg'),
+        naturalidade: primeiroPreenchido('naturalidade'),
+        statusPlanilha: statusOriginalPlanilha,
+        protocoloPlanilha,
+        inseridoPlanilhaEm,
+        statusWhatsApp,
+        dataUltimoWhatsApp,
+        totalLembretesWhatsApp,
+        // Link já gravado na coluna T da planilha (só vale se for deste mesmo token)
+        linkPlanilha: ((itens.find((i) => i.link && String(i.link).endsWith(`/${token}`)) || {}).link) || '',
+        dataReferencia,
+        tipoImpressoStatus,
+        cursos
+      });
+
+      // Se na planilha já consta como EMITIR ou com Protocolo preenchido, hidrata respostas em memória
+      const aprovadoNaPlanilha = itens.some(
+        (i) => String(i.statusLyra || '').trim().toUpperCase() === 'APROVADO'
+      );
+      if (!respostas.has(token) && statusOriginalPlanilha === 'EMITIR') {
+        const respostaJsonRaw = primeiroPreenchido('respostaJson');
+        let respostaHidratada = null;
+        if (respostaJsonRaw) {
+          try {
+            respostaHidratada = JSON.parse(respostaJsonRaw);
+          } catch {
+            respostaHidratada = null;
+          }
+        }
+        if (respostaHidratada && typeof respostaHidratada === 'object') {
+          respostas.set(token, {
+            ...respostaHidratada,
+            protocolo: respostaHidratada.protocolo || protocoloPlanilha || 'EMITIR',
+            statusBitrix: respostaHidratada.statusBitrix || 'EMITIR',
+            ...(aprovadoNaPlanilha ? {
+              emitidoNoLyra: true,
+              aguardandoEmissaoManual: false,
+              emitidoEm: respostaHidratada.emitidoEm || primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm
+            } : {})
+          });
+        } else {
+          respostas.set(token, {
+            protocolo: protocoloPlanilha || 'EMITIR',
+            dataSubmissao: new Date().toISOString(),
+            dataSubmissaoFormatada: inseridoPlanilhaEm || new Date().toLocaleString('pt-BR'),
+            statusBitrix: 'EMITIR',
+            origemPlanilha: true,
+            ...(aprovadoNaPlanilha ? {
+              emitidoNoLyra: true,
+              aguardandoEmissaoManual: false,
+              emitidoEm: primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm
+            } : {})
+          });
+        }
+      } else if (respostas.has(token) && aprovadoNaPlanilha) {
+        const respAtual = respostas.get(token);
+        if (respAtual && respAtual.emitidoNoLyra !== true) {
+          respAtual.emitidoNoLyra = true;
+          respAtual.aguardandoEmissaoManual = false;
+          if (!respAtual.emitidoEm) {
+            respAtual.emitidoEm = primeiroPreenchido('modificacaoStatus') || inseridoPlanilhaEm;
+          }
         }
       }
     }
