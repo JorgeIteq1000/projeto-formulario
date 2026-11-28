@@ -36,6 +36,7 @@ URL_LOGIN_ESTATICA = "https://api-gateway.faculdadeesp.com.br/U2FsdGVkX18tJxVXlI
 EMAIL_ACESSO = os.environ.get("LYRA_EMAIL") or os.environ.get("EMAIL_ACESSO") or "comercial@iteqescolas.com.br"
 SENHA_ACESSO = os.environ.get("LYRA_PASSWORD") or os.environ.get("SENHA_ACESSO") or "N@talia16103010"
 ABA_PLANILHA = os.environ.get("GOOGLE_SHEET_TAB") or "Extensões e Aperfeiçoamentos"
+DATA_CORTE_SOLICITACOES = os.environ.get("DATA_CORTE_SOLICITACOES", "2026-11-24").strip()
 
 HEADERS_PADRAO = {
     "Accept": "application/json", "Content-Type": "application/json", "Company": "iteq",
@@ -111,6 +112,33 @@ def formatar_data_nascimento(bdate_raw):
         return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
     except Exception:
         return s[:10]
+
+def extrair_data_local(data_iso):
+    if not data_iso:
+        return None
+    s = str(data_iso).strip()
+    if "T" in s and (s.endswith("Z") or "+" in s[10:] or "-" in s[10:]):
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.astimezone(FUSO_BRASILIA).date()
+        except Exception:
+            pass
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+def esta_na_janela_data_corte(data_iso, data_corte_str=DATA_CORTE_SOLICITACOES):
+    if not data_corte_str:
+        return True
+    dt_item = extrair_data_local(data_iso)
+    if dt_item is None:
+        return False
+    try:
+        dt_corte = datetime.strptime(data_corte_str[:10], "%Y-%m-%d").date()
+    except Exception:
+        return True
+    return dt_item >= dt_corte
 
 def calcular_previsao_termino(data_inicio_str, meses_para_add):
     if not data_inicio_str or data_inicio_str == "N/A" or not meses_para_add: return "N/A"
@@ -299,25 +327,47 @@ def executar_rotina_automatizada(session_id=None):
             log(f"🎯 [{rotulo_status}] Detectados {total_docs} documentos em {total_pages} página(s).")
 
             itens_fila = list(data_sonda['data'])
-            if total_pages > 1:
-                paginas_restantes = range(2, total_pages + 1)
+            # Como a API retorna ordenado por _id descendente (mais recentes primeiro),
+            # se todos os itens da página 1 já forem anteriores à DATA_CORTE_SOLICITACOES, não precisa varrer páginas antigas.
+            tem_recente_pag1 = any(esta_na_janela_data_corte(it.get("createdAt")) for it in itens_fila)
+            if total_pages > 1 and tem_recente_pag1:
+                pg = 2
+                lote_tamanho = 5
+                parar_paginacao = False
+                while pg <= total_pages and not parar_paginacao:
+                    paginas_lote = list(range(pg, min(pg + lote_tamanho, total_pages + 1)))
 
-                def worker_fetch(pg, st=status_alvo):
-                    rota = f'certificates/certificate-solicitations?status={st}&sort={{"_id":-1}}&page={pg}&limit=50&aggregate=[]'
-                    d = bater_na_api(rota, headers)
-                    if d and 'data' in d:
-                        log(f"⚡ [{st}] Página {pg}/{total_pages} capturada!")
-                        return d['data']
-                    return []
+                    def worker_fetch(p_num, st=status_alvo):
+                        rota = f'certificates/certificate-solicitations?status={st}&sort={{"_id":-1}}&page={p_num}&limit=50&aggregate=[]'
+                        d = bater_na_api(rota, headers)
+                        if d and 'data' in d:
+                            log(f"⚡ [{st}] Página {p_num}/{total_pages} capturada!")
+                            return (p_num, d['data'])
+                        return (p_num, [])
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    futures = {executor.submit(worker_fetch, pg): pg for pg in paginas_restantes}
-                    for future in concurrent.futures.as_completed(futures):
-                        res = future.result()
-                        if res:
-                            itens_fila.extend(res)
+                    resultados_lote = {}
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=lote_tamanho) as executor:
+                        futures = [executor.submit(worker_fetch, p_num) for p_num in paginas_lote]
+                        for future in concurrent.futures.as_completed(futures):
+                            p_num, res_pg = future.result()
+                            resultados_lote[p_num] = res_pg
+
+                    for p_num in paginas_lote:
+                        res_pg = resultados_lote.get(p_num) or []
+                        if not res_pg:
+                            parar_paginacao = True
+                            break
+                        itens_fila.extend(res_pg)
+                        if not any(esta_na_janela_data_corte(it.get("createdAt")) for it in res_pg):
+                            log(f"⏹️ [{rotulo_status}] Página {p_num} já anterior a {DATA_CORTE_SOLICITACOES}; encerrando paginação.")
+                            parar_paginacao = True
+                            break
+
+                    pg += lote_tamanho
 
             for item in itens_fila:
+                if not esta_na_janela_data_corte(item.get("createdAt")):
+                    continue
                 item_id = str(item.get("_id") or "")
                 if item_id and item_id in ids_vistos:
                     continue
