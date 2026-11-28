@@ -265,7 +265,7 @@ async function executarEmissaoCursosLyra({ link, cursosParaCertificar = [], jaEm
   return { resultados, falhas, todosEmitidos, emitidosAgora };
 }
 
-async function notificarAlunoZionicSilencioso({ nome, telefone, mensagem, contexto }) {
+async function notificarAlunoZionicSilencioso({ nome, telefone, mensagem, contexto, cpf = null, statusWhatsAppAoSucesso = null }) {
   if (SHEET_SOMENTE_LEITURA) return;
   if (process.env.NODE_ENV === 'test') return;
   const temCredenciaisZionic = Boolean(
@@ -285,6 +285,13 @@ async function notificarAlunoZionicSilencioso({ nome, telefone, mensagem, contex
     });
     if (res?.sucesso) {
       console.log(`📱 [ZIONIC] Notificação (${contexto}) enviada para ${nome} (${telLimpo}). ID: ${res.data?.id || 'OK'}`);
+      if (statusWhatsAppAoSucesso && cpf && GOOGLE_SHEET_ID) {
+        const agoraStr = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+        gravarStatusWhatsAppNaPlanilha({
+          spreadsheetId: GOOGLE_SHEET_ID,
+          itens: [{ cpf, statusWhatsApp: statusWhatsAppAoSucesso, dataUltimoWhatsApp: agoraStr }]
+        }).catch((err) => console.warn(`⚠️  [ZIONIC] Falha ao marcar ${statusWhatsAppAoSucesso} na planilha: ${err.message}`));
+      }
     } else {
       console.warn(`⚠️  [ZIONIC] Falha na notificação (${contexto}) para ${nome}: ${res?.erro || 'erro desconhecido'}`);
     }
@@ -375,7 +382,9 @@ async function processarFilaEmissaoAutomatica() {
               cursos: cursosParaCertificar,
               tipoImpressoStatus: link.tipoImpressoStatus || null
             }),
-            contexto: 'certificado_emitido_auto'
+            contexto: 'certificado_emitido_auto',
+            cpf: link.cpf,
+            statusWhatsAppAoSucesso: 'EMITIDO_ENVIADO'
           });
         } else {
           falhas++;
@@ -611,7 +620,7 @@ async function carregarBase() {
       });
 
       // Se na planilha já consta como EMITIR ou com Protocolo preenchido, hidrata respostas em memória
-      const aprovadoNaPlanilha = itens.some(
+      const aprovadoNaPlanilha = itens.length > 0 && itens.every(
         (i) => String(i.statusLyra || '').trim().toUpperCase() === 'APROVADO'
       );
       if (!respostas.has(token) && statusOriginalPlanilha === 'EMITIR') {
@@ -1089,7 +1098,9 @@ app.post('/api/link/:token/resposta', async (req, res) => {
           cursos: cursosParaCertificar,
           tipoImpressoStatus: link.tipoImpressoStatus || null
         }),
-        contexto: 'certificado_emitido_imediato'
+        contexto: 'certificado_emitido_imediato',
+        cpf: link.cpf,
+        statusWhatsAppAoSucesso: 'EMITIDO_ENVIADO'
       });
     }
   });
@@ -1530,7 +1541,9 @@ app.post('/api/solicitacoes/:token/emitir', middlewareAutenticacaoAdmin, async (
         cursos: cursosParaCertificar,
         tipoImpressoStatus: link.tipoImpressoStatus || null
       }),
-      contexto: 'certificado_emitido_manual'
+      contexto: 'certificado_emitido_manual',
+      cpf: link.cpf,
+      statusWhatsAppAoSucesso: 'EMITIDO_ENVIADO'
     });
 
     return res.json({

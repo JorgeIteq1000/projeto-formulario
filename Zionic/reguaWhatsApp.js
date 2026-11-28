@@ -33,7 +33,8 @@ import {
   montarMensagemCertificado,
   montarMensagemLembreteDiario,
   montarMensagemAlerta2Horas,
-  montarMensagemExpirado
+  montarMensagemExpirado,
+  montarMensagemCertificadoEmitido
 } from './mensagemTemplate.js';
 import { dispararMensagemAlunoZionic } from './zionicClient.js';
 
@@ -151,6 +152,15 @@ export async function executarReguaWhatsApp({
   const todasLinhas = res.dados || [];
   // O aluno não recebe link nem cobrança de WhatsApp para solicitação Impressa (apenas Digital)
   const ehImpresso = (l) => String(l.tipoCertificado || '').trim().toLowerCase().includes('impresso');
+  const impressoPorCpfCurso = new Map();
+  for (const l of todasLinhas) {
+    if (!tipoCursoNoEscopo(l.tipoCurso) || !ehImpresso(l)) continue;
+    const cpfImp = normalizarCpf(l.cpf);
+    const cursoImp = String(l.curso || '').trim().toUpperCase();
+    if (!cpfImp || !cursoImp) continue;
+    const stLyraImp = String(l.statusLyra || '').trim().toUpperCase();
+    impressoPorCpfCurso.set(`${cpfImp}|${cursoImp}`, stLyraImp.includes('PAGAMENTO') ? 'AGUARDANDO_PAGAMENTO' : 'APROVADO');
+  }
   const linhas = todasLinhas.filter((l) => tipoCursoNoEscopo(l.tipoCurso) && !ehImpresso(l));
 
   // Agrupa solicitações por CPF
@@ -213,10 +223,53 @@ export async function executarReguaWhatsApp({
     const telefone = itens.find((i) => i.telefone)?.telefone || todosItens.find((i) => i.telefone)?.telefone || '';
     const cursos = [...new Set(itens.map((i) => i.curso).filter(Boolean))];
 
-    // 1. Se não há nenhum curso pendente e existem ativos já emitidos/aprovados -> ignora
+    // 1. Se não há nenhum curso pendente e existem ativos já emitidos/aprovados:
+    //    Se TODOS os cursos de um lote EMITIR foram aprovados no Lyra (mesmo manualmente fora do painel)
+    //    a partir de 28/11/2026 11:25 e ainda não receberam EMITIDO_ENVIADO, envia a notificação de emissão!
     const jaEmitido = itensPendentes.length === 0 && itensAtivos.length > 0;
 
     if (jaEmitido) {
+      const itensEmitir = itensAtivos.filter(
+        (i) => String(i.statusOriginal || '').trim().toUpperCase() === 'EMITIR'
+      );
+      const todosAprovados =
+        itensEmitir.length > 0 &&
+        itensEmitir.every((i) => String(i.statusLyra || '').trim().toUpperCase() === 'APROVADO');
+      const jaNotificadoEmitido = itensEmitir.some(
+        (i) => String(i.statusWhatsApp || '').trim().toUpperCase() === 'EMITIDO_ENVIADO'
+      );
+      const corteEmitidoMs = new Date(process.env.DATA_CORTE_NOTIF_EMITIDO_ISO || '2026-11-28T11:25:00-03:00').getTime();
+      const modRecente = itensEmitir.some((i) => {
+        const dtMod = parseDataHoraFlexivel(i.modificacaoStatus);
+        return dtMod && dtMod.getTime() >= corteEmitidoMs;
+      });
+
+      if (todosAprovados && !jaNotificadoEmitido && modRecente && telefone && telefone.length >= 10) {
+        const cursosEmitir = [...new Set(itensEmitir.map((i) => i.curso).filter(Boolean))];
+        let tipoImpressoStatus = null;
+        for (const crs of cursosEmitir) {
+          const imp = impressoPorCpfCurso.get(`${cpf}|${String(crs || '').trim().toUpperCase()}`);
+          if (imp === 'AGUARDANDO_PAGAMENTO') {
+            tipoImpressoStatus = 'AGUARDANDO_PAGAMENTO';
+            break;
+          }
+          if (imp === 'APROVADO') tipoImpressoStatus = 'APROVADO';
+        }
+        filaDeEnvios.push({
+          cpf,
+          nome,
+          telefone,
+          cursos: cursosEmitir,
+          linkAtual: '',
+          etapa: 'CERTIFICADO_EMITIDO',
+          mensagem: montarMensagemCertificadoEmitido({ nome, cursos: cursosEmitir, tipoImpressoStatus }),
+          proximoStatus: 'EMITIDO_ENVIADO',
+          novoTotalLembretes: Number(itensEmitir[0]?.totalLembretesWhatsApp || 0),
+          horasRestantes: 0
+        });
+        continue;
+      }
+
       relatorio.jaEmitidos++;
       relatorio.detalhes.push({ cpf, nome, acao: 'IGNORADO_JA_EMITIDO' });
       continue;
@@ -394,6 +447,7 @@ export async function executarReguaWhatsApp({
           else if (item.etapa.startsWith('LEMBRETE')) relatorio.enviadosLembrete++;
           else if (item.etapa === 'ALERTA_2H') relatorio.enviadosAlerta2h++;
           else if (item.etapa === 'EXPIRADO_96H') relatorio.enviadosExpirado++;
+          else if (item.etapa === 'CERTIFICADO_EMITIDO') relatorio.jaEmitidos++;
 
           const agoraISO = new Date().toISOString();
           const agoraFormatado = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });

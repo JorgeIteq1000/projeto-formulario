@@ -811,10 +811,14 @@ export async function gravarStatusWhatsAppNaPlanilha({ spreadsheetId, itens = []
     for (let i = 1; i < rows.length; i++) {
       const digitos = String(rows[i][colCpfIdx] || '').replace(/\D/g, '').padStart(11, '0');
       if (!digitos || !porCpf.has(digitos)) continue;
-      const statusFormLinha = colStatusFormFinalIdx !== -1 ? semAcento(rows[i][colStatusFormFinalIdx] || '') : '';
-      if (linhaEhImpressaOuEncerrada(headersNorm, rows[i]) || statusFormLinha === 'EMITIR') continue;
-
       const info = porCpf.get(digitos);
+      const statusFormLinha = colStatusFormFinalIdx !== -1 ? semAcento(rows[i][colStatusFormFinalIdx] || '') : '';
+      const ehNotifEmitido = info.statusWhatsApp === 'EMITIDO_ENVIADO' && statusFormLinha === 'EMITIR';
+      if (!ehNotifEmitido && (linhaEhImpressaOuEncerrada(headersNorm, rows[i]) || statusFormLinha === 'EMITIR')) continue;
+      if (ehNotifEmitido && headersNorm.some((h) => h.includes('TIPO') && h.includes('CERT'))) {
+        const idxTp = headersNorm.findIndex((h) => h.includes('TIPO') && h.includes('CERT'));
+        if (idxTp !== -1 && semAcento(rows[i][idxTp] || '').includes('IMPRESSO')) continue;
+      }
       const linhaNum = i + 1;
 
       // Atualiza Coluna I (STATUS DO FORMULÁRIO) para "Enviado" apenas se ainda estiver pendente de envio
