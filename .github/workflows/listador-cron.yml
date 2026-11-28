@@ -1,9 +1,9 @@
-name: Listador de Certificados (Cron 20 min)
+name: Listador de Certificados (Cron ~22 min)
 
 on:
   schedule:
-    # Executa a cada 20 minutos de forma autônoma na nuvem
-    - cron: '*/20 * * * *'
+    # Executa nos minutos 7, 29 e 51 para fugir do congestionamento de :00/:20/:40 no GitHub Actions
+    - cron: '7,29,51 * * * *'
   workflow_dispatch:
     # Permite execução manual a qualquer momento via painel do GitHub Actions
 
